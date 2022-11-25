@@ -6,7 +6,7 @@
 # at https://opensource.org/licenses/MIT
 #
 
-.PHONY: all clean run build asm qemu TARGET
+.PHONY: all clean run build asm qemu TARGET FORCE
 
 KERNEL = target/riscv64/release/kernel
 TARGET = target/riscv64/release/kernel.bin
@@ -19,10 +19,10 @@ all: build
 build: $(TARGET)
 
 $(TARGET): $(KERNEL)
-	@$(OBJCOPY) $^ --strip-all -O binary $@
+	@$(OBJCOPY) $^ -S -O binary $@
 
-$(KERNEL):
-	cargo xbuild --target ../scripts/riscv64.json --release
+$(KERNEL): FORCE
+	@cargo xbuild --target ../scripts/riscv64.json --release
 
 clean:
 	@-rm $(TARGET) $(KERNEL)
@@ -34,4 +34,7 @@ asm:
 	$(OBJDUMP) -d $(KERNEL) | less
 
 qemu:
-	cd ../../qemu && ./sstart.sh && cd -
+	@ cd ../../qemu && ./sstart.sh && cd -
+
+PHONY += FORCE
+FORCE:
