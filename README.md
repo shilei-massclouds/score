@@ -47,3 +47,43 @@ A simple OS in rust
     ```sh
     cargo run --target riscv64gc-unknown-none-elf
     ```
+
+### LDScript (kernel.ld)
+
+1. Use self-defining ldscript
+    ```asm
+    "linker": "rust-lld",
+    "linker-flavor": "ld.lld",
+    "pre-link-args": {
+        "ld.lld": ["-Tkernel.ld"]
+    },
+    ```
+    
+    In scripts/riscv64.json, we specify our self-defining ldscript.
+    
+2. Base Link Address
+    ```asm
+    /* Beginning of entry code segment */
+    . = KERNEL_BASE;
+    _start = .;
+
+    ```
+
+    KERNEL_BASE is the virtual space address for kernel image itself.
+    After turning on mmu, map kernel image into this address.
+    But in fact, we compile kernel based on Model __medany__, so all
+    kernel instructions are PC-relative and they never depend on this address.
+    
+3. Sections
+
+    There are five major sections:
+    - .text.entry
+        startup code which must be the headmost;
+    - .text:
+        code
+    - .rodata
+        readonly data and srodata;
+    - .data
+        read-write data and sdata;
+    - .bss
+        bss and sbss;
