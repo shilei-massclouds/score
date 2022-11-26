@@ -109,13 +109,15 @@ A simple OS in rust
         }
         ```
 
-### StdOut and Mutex
+### StdOut with Mutex
 
-    StdOut is simply based on sbi console_put_char.  
-    But as a global variable, it should be protected by Mutex.  
-    Now there is no concepts of thread and block, so just  
-    introduce a spinlock called spin::Mutex.
-    ```rust
+1. StdOut is simply based on sbi console_put_char.
+
+2. As a global variable, StdOut should be protected by Mutex.  
+Now there is no concepts of thread and block, so just  
+introduce a spinlock called spin::Mutex.
+
+    ```RUST
     pub static STDOUT: Mutex<StdOut> = Mutex::new(StdOut);
 
     /* use it by a guard */
