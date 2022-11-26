@@ -11,19 +11,18 @@
 
 use core::panic::PanicInfo;
 use core::arch::global_asm;
-use crate::arch::sbi::console_putchar;
+use crate::stdio::STDOUT;
 
 global_asm!(include_str!("arch/riscv64/start.S"));
 
 #[path = "arch/riscv64/mod.rs"]
 mod arch;
 
+mod stdio;
+
 #[no_mangle]
 fn lk_main() -> ! {
-    console_putchar('H');
-    console_putchar('i');
-    console_putchar('!');
-    console_putchar('\n');
+    STDOUT.lock().puts("Hello\n");
     loop {}
 }
 
