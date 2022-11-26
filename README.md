@@ -25,7 +25,7 @@ A simple OS in rust
     ```sh
     [profile.dev]
     panic = "abort"
-    
+
     [profile.release]
     panic = "abort"
     ```
@@ -58,9 +58,9 @@ A simple OS in rust
         "ld.lld": ["-Tkernel.ld"]
     },
     ```
-    
+
     In scripts/riscv64.json, we specify our self-defining ldscript.
-    
+
 2. Base Link Address
     ```asm
     /* Beginning of entry code segment */
@@ -69,21 +69,42 @@ A simple OS in rust
 
     ```
 
-    KERNEL_BASE is the virtual space address for kernel image itself.
-    After turning on mmu, map kernel image into this address.
-    But in fact, we compile kernel based on Model __medany__, so all
+    KERNEL_BASE is the virtual space address for kernel image itself.  
+    After turning on mmu, map kernel image into this address.  
+    But in fact, we compile kernel based on Model __medany__, so all  
     kernel instructions are PC-relative and they never depend on this address.
-    
+
 3. Sections
 
     There are five major sections:
     - .text.entry
-        startup code which must be the headmost;
+
+        startup code which must be the headmost.
+
     - .text:
-        code
+
+        code.
+
     - .rodata
-        readonly data and srodata;
+
+        read-only data and srodata.
+
     - .data
-        read-write data and sdata;
+
+        read-write data and sdata.
+
     - .bss
-        bss and sbss;
+
+        _bss_ and _sbss_.  
+        At the beginning of _bss_, we alloc two areas for boot stack and  
+        boot heap.
+        ```asm
+        .bss : AT(ADDR(.bss) - KERNEL_BASE) {
+            _boot_stack = .;
+            . += CONFIG_STACK_SIZE;
+            _boot_stack_top = .;
+            _boot_heap = .;
+            . += CONFIG_BOOT_HEAP_SIZE;
+            _boot_heap_end = .;
+        }
+        ```

@@ -61,10 +61,13 @@ SECTIONS
     . = ALIGN(PAGE_SIZE);
 
     .bss : AT(ADDR(.bss) - KERNEL_BASE) {
+        /* boot stack and boot heap which are aligned. */
+        _boot_stack = .;
         . += CONFIG_STACK_SIZE;
         _boot_stack_top = .;
         _boot_heap = .;
         . += CONFIG_BOOT_HEAP_SIZE;
+        _boot_heap_end = .;
         *(.bss*)
         *(COMMON)
     }
