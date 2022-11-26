@@ -13,6 +13,7 @@ TARGET = target/riscv64/release/kernel.bin
 
 OBJCOPY = riscv64-linux-gnu-objcopy
 OBJDUMP = riscv64-linux-gnu-objdump
+READELF = riscv64-linux-gnu-readelf
 
 all: build
 
@@ -32,6 +33,9 @@ run: build qemu
 
 asm:
 	$(OBJDUMP) -d $(KERNEL) | less
+
+elf:
+	$(READELF) -WS $(KERNEL)
 
 qemu:
 	@ cd ../../qemu && ./sstart.sh && cd -
