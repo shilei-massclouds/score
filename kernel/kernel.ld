@@ -51,7 +51,7 @@ SECTIONS
         *(.data .data.*)
     }
     .sdata : AT(ADDR(.sdata) - KERNEL_BASE) {
-        /*__global_pointer$ = . + 0x800; */
+        __global_pointer$ = . + 0x800;
         *(.sdata*)
     }
 

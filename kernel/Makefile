@@ -8,8 +8,9 @@
 
 .PHONY: all clean run build asm qemu TARGET FORCE
 
-KERNEL = target/riscv64/release/kernel
-TARGET = target/riscv64/release/kernel.bin
+BUILDDIR := target/riscv64gc-unknown-none-elf/release/
+KERNEL := $(BUILDDIR)/kernel
+TARGET := $(BUILDDIR)/kernel.bin
 
 OBJCOPY = riscv64-linux-gnu-objcopy
 OBJDUMP = riscv64-linux-gnu-objdump
@@ -23,10 +24,11 @@ $(TARGET): $(KERNEL)
 	@$(OBJCOPY) $^ -S -R .eh_frame -R .note -R .comment -O binary $@
 
 $(KERNEL): FORCE
-	@cargo xbuild --target ../scripts/riscv64.json --release
+	@cargo xbuild --target riscv64gc-unknown-none-elf --release
+	#-Z build-std=core,alloc -Z build-std-features=compiler-builtins-mem
 
 clean:
-	@-rm $(TARGET) $(KERNEL)
+	@-rm -f $(TARGET) $(KERNEL)
 	@-cargo clean
 
 run: build qemu

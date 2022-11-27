@@ -47,28 +47,18 @@ A simple OS in rust
     ```sh
     cargo run --target riscv64gc-unknown-none-elf
     ```
-    
-8. Customized Target
-
-    But we find that riscv64gc-unknown-none-elf still can't meet our needs,  
-    so we will define our own target settings (scripts/riscv64.json).
-
-> IMPORTANT NOTE in scripts/riscv64.json:  
->   "code-model": "medium",  
-> This specifies the compile option "-mcmodel=medany", so kernel code is PC-relative.
 
 ### LDScript (kernel.ld)
 
 1. Use self-defining ldscript
-    ```asm
-    "linker": "rust-lld",
-    "linker-flavor": "ld.lld",
-    "pre-link-args": {
-        "ld.lld": ["-Tkernel.ld"]
-    },
-    ```
 
-    In scripts/riscv64.json, we specify our self-defining ldscript.
+    Add .cargo/config to override the default ld script.
+    ```asm
+    [target.riscv64gc-unknown-none-elf]
+    rustflags = [
+        "-C", "link-arg=-Tkernel.ld",
+    ]
+    ```
 
 2. Base Link Address
     ```asm
