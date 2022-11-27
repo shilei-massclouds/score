@@ -22,7 +22,7 @@ mod stdio;
 
 #[no_mangle]
 fn lk_main() -> ! {
-    STDOUT.lock().puts("Hello\n");
+    STDOUT.lock().puts("[Hello]\n");
     loop {}
 }
 

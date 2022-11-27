@@ -123,3 +123,20 @@ introduce a spinlock called spin::Mutex.
     /* use it by a guard */
     STDOUT.lock().puts("Hello\n");
     ```
+
+> __NOTICE__:
+> Now we still cannot implement println!, since MMU hasn't
+> been enabled. Those print stuff must parse Arguments by
+> crate alloc::format; and this crate is backed by compiler.
+> Surprisingly, compiler generates code is based on
+> LinkAddress-Relative rather than PC-Relative.
+>
+> E.g. If we NOW call _println!_ or even _format!_ directly, we will
+> run up against a fault.
+>
+> Trace Qemu: "riscv\_cpu\_\do\_interrupt[target/riscv/cpu\_helper.c]".
+> Check csrs:
+>   _scause_: RISCV\_EXCP_\INST\_ACCESS\_FAULT;
+>   _tval_(badaddr): like 0xffffffff0000XXXX;
+>
+> Obviously, code in alloc::format accesses virtual aspace addr!

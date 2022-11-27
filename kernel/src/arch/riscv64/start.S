@@ -11,4 +11,12 @@
 _start:
     la sp, _boot_stack_top
 
+    la t0, 2f
+    csrw stvec, t0
+
     call lk_main
+
+    /* Loop forever for debug. */
+    .align 2
+ 2: wfi
+    j 2b

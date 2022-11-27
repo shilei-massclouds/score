@@ -20,7 +20,7 @@ all: build
 build: $(TARGET)
 
 $(TARGET): $(KERNEL)
-	@$(OBJCOPY) $^ -S -O binary $@
+	@$(OBJCOPY) $^ -S -R .eh_frame -R .note -R .comment -O binary $@
 
 $(KERNEL): FORCE
 	@cargo xbuild --target ../scripts/riscv64.json --release
