@@ -47,6 +47,15 @@ A simple OS in rust
     ```sh
     cargo run --target riscv64gc-unknown-none-elf
     ```
+    
+8. Customized Target
+
+    But we find that riscv64gc-unknown-none-elf still can't meet our needs,  
+    so we will define our own target settings (scripts/riscv64.json).
+
+> IMPORTANT NOTE in scripts/riscv64.json:  
+>   "code-model": "medium",  
+> This specifies the compile option "-mcmodel=medany", so kernel code is PC-relative.
 
 ### LDScript (kernel.ld)
 
@@ -71,8 +80,6 @@ A simple OS in rust
 
     KERNEL_BASE is the virtual space address for kernel image itself.  
     After turning on mmu, map kernel image into this address.  
-    But in fact, we compile kernel based on Model __medany__, so all  
-    kernel instructions are PC-relative and they never depend on this address.
 
 3. Sections
 
@@ -124,19 +131,19 @@ introduce a spinlock called spin::Mutex.
     STDOUT.lock().puts("Hello\n");
     ```
 
-> __NOTICE__:
-> Now we still cannot implement println!, since MMU hasn't
-> been enabled. Those print stuff must parse Arguments by
-> crate alloc::format; and this crate is backed by compiler.
-> Surprisingly, compiler generates code is based on
-> LinkAddress-Relative rather than PC-Relative.
+> __NOTICE__:  
+> Now we still cannot implement println!, since MMU hasn't been enabled.  
+> Those print stuff must parse Arguments by crate alloc::format;  
+> and this crate is backed by compiler.  
+> Surprisingly, compiler generates code is based on LinkAddress-Relative  
+> rather than PC-Relative.  
 >
-> E.g. If we NOW call _println!_ or even _format!_ directly, we will
-> run up against a fault.
+> E.g. If we NOW call _println!_ or even _format!_ directly, we will  
+> run up against a fault.  
 >
-> Trace Qemu: "riscv\_cpu\_\do\_interrupt[target/riscv/cpu\_helper.c]".
-> Check csrs:
->   _scause_: RISCV\_EXCP_\INST\_ACCESS\_FAULT;
->   _tval_(badaddr): like 0xffffffff0000XXXX;
+> Trace Qemu: "riscv\_cpu\_\do\_interrupt[target/riscv/cpu\_helper.c]".  
+> Check csrs:  
+>   _scause_: RISCV\_EXCP_\INST\_ACCESS\_FAULT;  
+>   _tval_(badaddr): like 0xffffffff0000XXXX;  
 >
-> Obviously, code in alloc::format accesses virtual aspace addr!
+> Obviously, code in alloc::format accesses virtual aspace address!
