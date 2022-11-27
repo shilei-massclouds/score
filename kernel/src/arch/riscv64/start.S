@@ -6,9 +6,9 @@
  * at https://opensource.org/licenses/MIT
  */
 
-/*
- * Image header expected by Linux boot-loaders.
- */
+    /*
+     * Image header expected by Linux boot-loaders.
+     */
 
     .section ".text.entry", "ax"
     .balign 4
@@ -20,9 +20,9 @@ _start:
 _hart_lottery:
     .word 0
 
-/*
- * Entry
- */
+    /*
+     * Entry
+     */
 
     .balign 4
     .globl _start_kernel
@@ -50,7 +50,31 @@ _start_kernel:
     amoadd.w a3, a2, (a3)
     bnez a3, _secondary_start
 
+    /* Clear BSS for flat non-ELF images */
+    la a3, __bss_start
+    la a4, __bss_stop
+    ble a4, a3, clear_bss_done
+clear_bss:
+    sd zero, (a3)
+    add a3, a3, 8   /* RISCV_SZPTR */
+    blt a3, a4, clear_bss
+clear_bss_done:
+
+    /* Save hart ID and DTB physical address */
+    mv s0, a0
+    mv s1, a1
+
+    /*
+    la a2, boot_cpu_hartid
+    sd a0, (a2)
+    */
+
     la sp, _boot_stack_top
+
+    /* Initialize page tables */
+    call setup_vm
+
+    /* Initialize page tables and relocate to virtual addresses */
 
     la t0, _park
     csrw stvec, t0

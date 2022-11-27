@@ -60,6 +60,8 @@ SECTIONS
 
     . = ALIGN(PAGE_SIZE);
 
+    . = ALIGN(PAGE_SIZE);
+    __bss_start = .;
     .bss : AT(ADDR(.bss) - KERNEL_BASE) {
         /* boot stack and boot heap which are aligned. */
         _boot_stack = .;
@@ -71,11 +73,13 @@ SECTIONS
         *(.bss*)
         *(COMMON)
     }
+    . = ALIGN(PAGE_SIZE);
     .sbss : AT(ADDR(.sbss) - KERNEL_BASE) {
         *(.dynsbss)
         *(.sbss)
         *(.scommon)
     }
+    __bss_stop = .;
 
     . = ALIGN(PAGE_SIZE);
     _end = .;
