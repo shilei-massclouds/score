@@ -79,10 +79,6 @@ SECTIONS
         _boot_heap = .;
         . += CONFIG_BOOT_HEAP_SIZE;
         _boot_heap_end = .;
-        /* trampoline pgdir [aligned] */
-        _trampoline_pgd = .;
-        . += PAGE_SIZE;
-        _trampoline_pgd_end = .;
         *(.bss*)
         *(COMMON)
     }

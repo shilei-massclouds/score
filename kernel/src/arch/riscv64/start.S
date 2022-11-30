@@ -6,6 +6,12 @@
  * at https://opensource.org/licenses/MIT
  */
 
+/* Todo: define these symbols in a generated file and include it */
+RISCV_SZPTR = 8;
+PAGE_SHIFT = 12;
+SR_FS = 0x00006000;
+KERNEL_BASE = 0xffffffff00000000;
+
     /*
      * Image header expected by Linux boot-loaders.
      */
@@ -17,7 +23,61 @@ _start:
     /* jump to start kernel */
     j _start_kernel
 
-_hart_lottery:
+    .balign 4
+    .global relocate_enable_mmu
+relocate_enable_mmu:
+    /* Relocate return address */
+    li a1, KERNEL_BASE
+    la a2, _start
+    sub a1, a1, a2
+    add ra, ra, a1
+
+    /* Point stvec to virtual address of intruction after satp write */
+    la a2, 1f
+    add a2, a2, a1
+    csrw stvec, a2
+
+    /* Compute satp for kernel page tables */
+    la a0, _swapper_pgd
+    srl a2, a0, PAGE_SHIFT
+    la a1, _satp_mode
+    ld a1, 0(a1)
+    or a2, a2, a1
+
+    /*
+     * Load kernel page directory, which will cause us to trap to
+     * stvec if VA != PA, or simply fall through if VA == PA.  We need a
+     * full fence here because setup_vm() just wrote these PTEs and we need
+     * to ensure the new translations are in use.
+     */
+    sfence.vma
+    csrw satp, a2
+    .balign 4
+1:
+    /* Set a full fence again */
+    sfence.vma
+
+    /* Set trap vector to spin forever to help debug */
+    la a0, _park
+    csrw stvec, a0
+
+    /* Reload the global pointer */
+    .option push
+    .option norelax
+    la gp, __global_pointer$
+    .option pop
+
+    ret
+
+    /*
+     * Entry data area:
+     */
+
+    .balign 8
+_satp_mode:
+    .dword 0
+
+_hart_lottery:  /* Lottery for electing boot hart */
     .word 0
 
     /*
@@ -41,7 +101,7 @@ _start_kernel:
      * Disable FPU to detect illegal usage of
      * floating point in kernel space
      */
-    li t0, 0x00006000   /* SR_FS */
+    li t0, SR_FS
     csrc sstatus, t0
 
     /* Pick one hart to run the main boot sequence */
@@ -56,7 +116,7 @@ _start_kernel:
     ble a4, a3, clear_bss_done
 clear_bss:
     sd zero, (a3)
-    add a3, a3, 8   /* RISCV_SZPTR */
+    add a3, a3, RISCV_SZPTR
     blt a3, a4, clear_bss
 clear_bss_done:
 
@@ -75,10 +135,15 @@ clear_bss_done:
     /* Initialize page tables */
     call setup_vm
 
-    /* Initialize page tables and relocate to virtual addresses */
+    /* Relocate to virtual addresses */
+    call relocate_enable_mmu
 
+    //call setup_trap_vector
     la t0, _park
     csrw stvec, t0
+
+    /* Restore C environment */
+    la sp, _boot_stack_top
 
     tail lk_main
 

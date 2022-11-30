@@ -13,8 +13,6 @@ use crate::defines::*;
 use crate::errors::ErrNO;
 use crate::STDOUT;
 
-/* trampoline is based on SV39, map one entry (1G) */
-const TRAMPOLINE_SHIFT: usize = 30;
 const PAGE_TABLE_ENTRIES: usize = 1 << (PAGE_SHIFT - 3);
 
 /*
@@ -48,6 +46,10 @@ pub const PAGE_KERNEL: usize =
 
 pub const PAGE_KERNEL_EXEC : usize = PAGE_KERNEL | _PAGE_EXEC;
 
+pub const SATP_MODE_39: usize = 0x8000000000000000;
+pub const SATP_MODE_48: usize = 0x9000000000000000;
+pub const SATP_MODE_57: usize = 0xa000000000000000;
+
 #[repr(C, align(4096))]
 pub struct PageTable([usize; PAGE_TABLE_ENTRIES]);
 
@@ -71,25 +73,15 @@ impl PageTable {
 
 extern "C" {
     pub fn _start();
-    pub static mut _trampoline_pgd: [usize; PAGE_TABLE_ENTRIES];
     pub static mut _swapper_pgd: PageTable;
     pub static mut _swapper_tables: PageTable;
+    pub static mut _satp_mode: usize;
 }
 
 #[no_mangle]
 pub extern "C" fn setup_vm() {
-    /* For trampoline */
-    /* set one entry in trampoline pgd */
-    let index = (KERNEL_BASE >> TRAMPOLINE_SHIFT) &
-        (PAGE_TABLE_ENTRIES - 1);
-    let item = _start as usize >> TRAMPOLINE_SHIFT;
-    unsafe {
-        _trampoline_pgd[index] = item;
-    }
-
     STDOUT.lock().puts("step1\n");
 
-    /* For swapper */
     let mut used: usize = 0;
     let mut alloc = || {
         unsafe {
@@ -115,7 +107,7 @@ pub extern "C" fn setup_vm() {
                        PAGE_KERNEL, &mut alloc);
     if let Err(_) = ret {
         STDOUT.lock().puts("map physmap error!\n");
-        return;
+        panic!("map physmap error!");
     }
 
     /* map the kernel to a fixed address */
@@ -124,7 +116,16 @@ pub extern "C" fn setup_vm() {
                        PAGE_KERNEL_EXEC, &mut alloc);
     if let Err(_) = ret {
         STDOUT.lock().puts("map kernel image error!\n");
-        return;
+        panic!("map kernel image error!");
+    }
+
+    unsafe {
+        _satp_mode = match MMU_LEVELS {
+            5 => SATP_MODE_57,
+            4 => SATP_MODE_48,
+            3 => SATP_MODE_39,
+            _ => panic!("bad satp mode!"),
+        };
     }
 }
 
