@@ -10,6 +10,7 @@ spin = "0.9.4"
 
 [profile.dev]
 panic = "abort"
+lto = true
 
 [profile.release]
 panic = "abort"

@@ -63,13 +63,26 @@ SECTIONS
     . = ALIGN(PAGE_SIZE);
     __bss_start = .;
     .bss : AT(ADDR(.bss) - KERNEL_BASE) {
-        /* boot stack and boot heap which are aligned. */
+        /* boot stack [aligned] */
         _boot_stack = .;
         . += CONFIG_STACK_SIZE;
         _boot_stack_top = .;
+        /* swapper pgdir [aligned] */
+        _swapper_pgd = .;
+        . += PAGE_SIZE;
+        _swapper_pgd_end = .;
+        /* swapper tables [aligned] */
+        _swapper_tables = .;
+        . += PAGE_SIZE * (CONFIG_MMU_MAX_LEVEL - 1);
+        _swapper_tables_end = .;
+        /* boot heap [aligned] */
         _boot_heap = .;
         . += CONFIG_BOOT_HEAP_SIZE;
         _boot_heap_end = .;
+        /* trampoline pgdir [aligned] */
+        _trampoline_pgd = .;
+        . += PAGE_SIZE;
+        _trampoline_pgd_end = .;
         *(.bss*)
         *(COMMON)
     }

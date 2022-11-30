@@ -18,6 +18,10 @@ global_asm!(include_str!("arch/riscv64/start.S"));
 #[path = "arch/riscv64/mod.rs"]
 mod arch;
 
+mod config_generated;
+mod types;
+mod defines;
+mod errors;
 mod stdio;
 
 #[no_mangle]

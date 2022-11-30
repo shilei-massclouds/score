@@ -12,9 +12,12 @@ BUILDDIR := target/riscv64gc-unknown-none-elf/release/
 KERNEL := $(BUILDDIR)/kernel
 TARGET := $(BUILDDIR)/kernel.bin
 
-OBJCOPY = riscv64-linux-gnu-objcopy
-OBJDUMP = riscv64-linux-gnu-objdump
-READELF = riscv64-linux-gnu-readelf
+CROSS_COMPILE := riscv64-linux-gnu-
+
+OBJCOPY = $(CROSS_COMPILE)objcopy
+OBJDUMP = $(CROSS_COMPILE)objdump
+READELF = $(CROSS_COMPILE)readelf
+NM = $(CROSS_COMPILE)nm
 
 all: build
 
@@ -26,6 +29,7 @@ $(TARGET): $(KERNEL)
 $(KERNEL): FORCE
 	@cargo xbuild --target riscv64gc-unknown-none-elf --release
 	#-Z build-std=core,alloc -Z build-std-features=compiler-builtins-mem
+	@$(NM) -n $@ | grep -v '\( [aNUw] \)\|\(__crc_\)\|\( \$[adt]\)\|\( \.L\)' > System.map
 
 clean:
 	@-rm -f $(TARGET) $(KERNEL)

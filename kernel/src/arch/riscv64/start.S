@@ -69,6 +69,7 @@ clear_bss_done:
     sd a0, (a2)
     */
 
+    /* Initialize boot stack */
     la sp, _boot_stack_top
 
     /* Initialize page tables */

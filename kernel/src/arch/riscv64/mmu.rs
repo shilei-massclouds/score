@@ -6,6 +6,240 @@
  * at https://opensource.org/licenses/MIT
  */
 
+use core::cmp::min;
+use core::ptr::null_mut;
+use crate::types::*;
+use crate::defines::*;
+use crate::errors::ErrNO;
+use crate::STDOUT;
+
+/* trampoline is based on SV39, map one entry (1G) */
+const TRAMPOLINE_SHIFT: usize = 30;
+const PAGE_TABLE_ENTRIES: usize = 1 << (PAGE_SHIFT - 3);
+
+/*
+ * PTE format:
+ * | XLEN-1  10 | 9             8 | 7 | 6 | 5 | 4 | 3 | 2 | 1 | 0
+ *       PFN      reserved for SW   D   A   G   U   X   W   R   V
+ */
+
+const _PAGE_PFN_SHIFT: usize = 10;
+
+const _PAGE_PRESENT : usize = 1 << 0;     /* Valid */
+const _PAGE_READ    : usize = 1 << 1;     /* Readable */
+const _PAGE_WRITE   : usize = 1 << 2;     /* Writable */
+const _PAGE_EXEC    : usize = 1 << 3;     /* Executable */
+const _PAGE_USER    : usize = 1 << 4;     /* User */
+const _PAGE_GLOBAL  : usize = 1 << 5;     /* Global */
+const _PAGE_ACCESSED: usize = 1 << 6;     /* Accessed (set by hardware) */
+const _PAGE_DIRTY   : usize = 1 << 7;     /* Dirty (set by hardware)*/
+
+/*
+ * when all of R/W/X are zero, the PTE is a pointer to the next level
+ * of the page table; otherwise, it is a leaf PTE.
+ */
+const _PAGE_LEAF: usize = _PAGE_READ | _PAGE_WRITE | _PAGE_EXEC;
+
+const PAGE_TABLE: usize = _PAGE_PRESENT;
+
+pub const PAGE_KERNEL: usize =
+    _PAGE_PRESENT | _PAGE_READ | _PAGE_WRITE |
+    _PAGE_GLOBAL | _PAGE_ACCESSED | _PAGE_DIRTY;
+
+pub const PAGE_KERNEL_EXEC : usize = PAGE_KERNEL | _PAGE_EXEC;
+
+#[repr(C, align(4096))]
+pub struct PageTable([usize; PAGE_TABLE_ENTRIES]);
+
+impl PageTable {
+    fn mk_item(&mut self, index: usize, pfn: usize, prot: usize) {
+        self.0[index] = (pfn << _PAGE_PFN_SHIFT) | prot;
+    }
+
+    fn item_present(&self, index: usize) -> bool {
+        (self.0[index] & _PAGE_PRESENT) == _PAGE_PRESENT
+    }
+
+    fn item_leaf(&self, index: usize) -> bool {
+        self.item_present(index) && ((self.0[index] & _PAGE_LEAF) != 0)
+    }
+
+    fn item_descend(&self, index: usize) -> *mut PageTable {
+        ((self.0[index] >> _PAGE_PFN_SHIFT) << PAGE_SHIFT) as *mut PageTable
+    }
+}
+
+extern "C" {
+    pub fn _start();
+    pub static mut _trampoline_pgd: [usize; PAGE_TABLE_ENTRIES];
+    pub static mut _swapper_pgd: PageTable;
+    pub static mut _swapper_tables: PageTable;
+}
+
 #[no_mangle]
 pub extern "C" fn setup_vm() {
+    /* For trampoline */
+    /* set one entry in trampoline pgd */
+    let index = (KERNEL_BASE >> TRAMPOLINE_SHIFT) &
+        (PAGE_TABLE_ENTRIES - 1);
+    let item = _start as usize >> TRAMPOLINE_SHIFT;
+    unsafe {
+        _trampoline_pgd[index] = item;
+    }
+
+    STDOUT.lock().puts("step1\n");
+
+    /* For swapper */
+    let mut used: usize = 0;
+    let mut alloc = || {
+        unsafe {
+            if used >= (MMU_MAX_LEVEL - 1) {
+                STDOUT.lock().puts("Out of boot tables!\n");
+                return null_mut();
+            }
+            let base = &mut _swapper_tables as *mut PageTable;
+            let base = base.offset(used as isize);
+            STDOUT.lock().puts("In alloc[");
+            STDOUT.lock().put_u64(base as u64);
+            STDOUT.lock().puts("]In alloc!\n");
+            used += 1;
+            return base;
+        }
+    };
+
+    /*
+     * map a large run of physical memory at the base of
+     * the kernel's address space.
+     */
+    let ret = boot_map(KERNEL_ASPACE_BASE, 0, ARCH_PHYSMAP_SIZE,
+                       PAGE_KERNEL, &mut alloc);
+    if let Err(_) = ret {
+        STDOUT.lock().puts("map physmap error!\n");
+        return;
+    }
+
+    /* map the kernel to a fixed address */
+    let ret = boot_map(KERNEL_BASE,
+                       _start as usize, (_end as usize) - (_start as usize),
+                       PAGE_KERNEL_EXEC, &mut alloc);
+    if let Err(_) = ret {
+        STDOUT.lock().puts("map kernel image error!\n");
+        return;
+    }
+}
+
+pub fn boot_map<F1>(vaddr: vaddr_t, paddr: paddr_t, len: usize,
+                    prot: prot_t, alloc: &mut F1) -> Result<(), ErrNO>
+    where F1: FnMut() -> *mut PageTable {
+
+    /* Loop through the virtual range and map each physical page,
+     * using the largest page size supported.
+     * Allocates necessar page tables along the way. */
+    unsafe {
+    STDOUT.lock().puts("boot_map[");
+    STDOUT.lock().put_u64(&mut _swapper_pgd as *mut PageTable as u64);
+    STDOUT.lock().puts("]boot_map\n");
+        _boot_map(&mut _swapper_pgd, 0,
+                  vaddr, paddr, len, prot, alloc)
+    }
+}
+
+/* Todo: Check KERNEL_ASPACE_BITS < 57 because SV57 is
+ * the highest mode that is supported. */
+const MMU_LEVELS: usize =
+    (KERNEL_ASPACE_BITS - PAGE_SHIFT) / (PAGE_SHIFT - 3) + 1;
+
+macro_rules! LEVEL_SHIFT {
+    ($level: expr) => {
+        ((MMU_LEVELS - ($level)) * (PAGE_SHIFT - 3) + 3)
+    }
+}
+
+macro_rules! LEVEL_SIZE {
+    ($level: expr) => {
+        1 << LEVEL_SHIFT!($level)
+    }
+}
+
+macro_rules! LEVEL_MASK {
+    ($level: expr) => {
+        !(LEVEL_SIZE!($level) - 1)
+    }
+}
+
+macro_rules! LEVEL_PA_TO_PFN {
+    ($pa: expr, $level: expr) => {
+        (($pa) >> LEVEL_SHIFT!($level))
+    }
+}
+
+macro_rules! PA_TO_PFN {
+    ($pa: expr) => {
+        (($pa) >> PAGE_SHIFT)
+    }
+}
+
+fn vaddr_to_index(addr: usize, level: usize) -> usize {
+    (addr >> LEVEL_SHIFT!(level)) & (PAGE_TABLE_ENTRIES - 1)
+}
+
+fn aligned_in_level(addr: usize, level: usize) -> bool {
+    (addr & !(LEVEL_MASK!(level))) == 0
+}
+
+fn _boot_map<F1>(table: &mut PageTable, level: usize,
+                 vaddr: vaddr_t, paddr: paddr_t, len: usize,
+                 prot: prot_t,
+                 alloc: &mut F1) -> Result<(), ErrNO>
+    where F1: FnMut() -> *mut PageTable {
+
+    let mut off = 0;
+    while off < len {
+        let index = vaddr_to_index(vaddr + off, level);
+        if level == (MMU_LEVELS-1) {
+            /* generate a standard leaf mapping */
+            table.mk_item(index, PA_TO_PFN!(paddr + off), prot);
+
+            off += PAGE_SIZE;
+            continue;
+        }
+        STDOUT.lock().puts("step2\n");
+        if !table.item_present(index) {
+            if (level != 0) &&
+                aligned_in_level(vaddr+off, level) &&
+                aligned_in_level(paddr+off, level) &&
+                ((len - off) >= LEVEL_SIZE!(level)) {
+                STDOUT.lock().puts("step2.1\n");
+                /* set up a large leaf at this level */
+                table.mk_item(index,
+                              LEVEL_PA_TO_PFN!(paddr + off, level),
+                              prot);
+
+                off += LEVEL_SIZE!(level);
+                continue;
+            }
+
+            let pa: usize = alloc() as usize;
+            table.mk_item(index, PA_TO_PFN!(pa), PAGE_TABLE);
+        }
+        STDOUT.lock().puts("step3\n");
+        if table.item_leaf(index) {
+            /* not legal as a leaf at this level */
+            return Err(ErrNO::BadState);
+        }
+        STDOUT.lock().puts("step4\n");
+
+        let lower_table_ptr = table.item_descend(index);
+        let lower_len = min(LEVEL_SIZE!(level), len-off);
+        unsafe {
+            _boot_map(&mut (*lower_table_ptr), level+1,
+                      vaddr+off, paddr+off, lower_len,
+                      prot, alloc)?;
+        }
+
+        off += LEVEL_SIZE!(level);
+        STDOUT.lock().puts("step5\n");
+    }
+
+    Ok(())
 }

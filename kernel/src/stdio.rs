@@ -18,6 +18,19 @@ impl StdOut {
             sbi::console_putchar(c);
         }
     }
+
+    pub fn put_u64(&mut self, n: u64) {
+        for i in 1..=16 {
+            let mut c = ((n >> ((16 - i)*4)) & 0xF) as u8;
+            if c >= 10 {
+                c -= 10;
+                c += 'A' as u8;
+            } else {
+                c += '0' as u8;
+            }
+            sbi::console_putchar(c as char);
+        }
+    }
 }
 
 impl fmt::Write for StdOut {
