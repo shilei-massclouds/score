@@ -9,6 +9,20 @@
 use spin::Mutex;
 use core::fmt;
 use crate::arch::sbi;
+use core::fmt::Write;
+
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => ({
+        $crate::stdio::_print(format_args!($($arg)*));
+    });
+}
+
+#[macro_export]
+macro_rules! println {
+    () => ($crate::print!("\n"));
+    ($($arg:tt)*) => ($crate::print!("{}\n", format_args!($($arg)*)));
+}
 
 pub struct StdOut;
 
@@ -41,3 +55,7 @@ impl fmt::Write for StdOut {
 }
 
 pub static STDOUT: Mutex<StdOut> = Mutex::new(StdOut);
+
+pub fn _print(args: fmt::Arguments) {
+    STDOUT.lock().write_fmt(args).unwrap();
+}

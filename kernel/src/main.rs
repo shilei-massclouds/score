@@ -26,11 +26,12 @@ mod stdio;
 
 #[no_mangle]
 fn lk_main() -> ! {
-    STDOUT.lock().puts("[Hello]\n");
+    println!("Hello, {}! [{}]", "world", 9);
     loop {}
 }
 
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
+fn panic(info: &PanicInfo) -> ! {
+    println!("{}", info);
     loop {}
 }
