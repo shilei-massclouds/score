@@ -74,7 +74,7 @@ impl PageTable {
 extern "C" {
     pub fn _start();
     pub static mut _swapper_pgd: PageTable;
-    pub static mut _swapper_tables: PageTable;
+    pub static mut _swapper_tables: [PageTable; MMU_MAX_LEVEL-1];
     pub static mut _satp_mode: usize;
 }
 
@@ -89,8 +89,7 @@ pub extern "C" fn setup_vm() {
                 STDOUT.lock().puts("Out of boot tables!\n");
                 return null_mut();
             }
-            let base = &mut _swapper_tables as *mut PageTable;
-            let base = base.offset(used as isize);
+            let base = &mut _swapper_tables[used] as *mut PageTable;
             STDOUT.lock().puts("In alloc[");
             STDOUT.lock().put_u64(base as u64);
             STDOUT.lock().puts("]In alloc!\n");

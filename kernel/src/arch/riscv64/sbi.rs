@@ -23,9 +23,18 @@ const SBI_SHUTDOWN          : usize = 0x8;
 
 const SBI_HSM : usize = 0x48534D;
 
+const SBI_EXT_SRST : usize = 0x53525354;
+const SBI_EXT_SRST_RESET: usize = 0;
+
+const SBI_SRST_RESET_TYPE_SHUTDOWN      : usize = 0;
+const SBI_SRST_RESET_TYPE_COLD_REBOOT   : usize = 1;
+const SBI_SRST_RESET_TYPE_WARM_REBOOT   : usize = 2;
+
+const SBI_SRST_RESET_REASON_NONE        : usize = 0;
+const SBI_SRST_RESET_REASON_SYS_FAILURE : usize = 1;
+
 #[inline(always)]
-fn sbi_call(eid: usize, fid: usize,
-            arg0: usize, arg1: usize, arg2: usize)
+fn sbi_call(eid: usize, fid: usize, arg0: usize, arg1: usize, arg2: usize)
     -> (usize, usize) {
     let ret0;
     let ret1;
@@ -46,4 +55,20 @@ fn sbi_call(eid: usize, fid: usize,
 
 pub fn console_putchar(ch: char) {
     sbi_call(SBI_CONSOLE_PUTCHAR, 0, ch as usize, 0, 0);
+}
+
+fn sbi_srst_reset(tid: usize, reason: usize)
+{
+    sbi_call(SBI_EXT_SRST, SBI_EXT_SRST_RESET, tid, reason, 0);
+}
+
+fn sbi_srst_power_off()
+{
+    sbi_srst_reset(SBI_SRST_RESET_TYPE_SHUTDOWN,
+                   SBI_SRST_RESET_REASON_NONE);
+}
+
+pub fn machine_power_off()
+{
+    sbi_srst_power_off();
 }

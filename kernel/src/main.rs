@@ -12,6 +12,7 @@
 use core::panic::PanicInfo;
 use core::arch::global_asm;
 use crate::stdio::STDOUT;
+use crate::arch::sbi::machine_power_off;
 
 global_asm!(include_str!("arch/riscv64/start.S"));
 
@@ -27,11 +28,14 @@ mod stdio;
 #[no_mangle]
 fn lk_main() -> ! {
     println!("Hello, {}! [{}]", "world", 9);
-    loop {}
+    panic!("Reach End!");
 }
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     println!("{}", info);
+
+    /* Power off on panic */
+    machine_power_off();
     loop {}
 }
