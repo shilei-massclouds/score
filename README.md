@@ -65,7 +65,7 @@ A simple OS in rust
     /* Beginning of entry code segment */
     . = KERNEL_BASE;
     _start = .;
-
+    
     ```
 
     KERNEL_BASE is the virtual space address for kernel image itself.  
@@ -111,12 +111,12 @@ A simple OS in rust
 1. StdOut is simply based on sbi console_put_char.
 
 2. As a global variable, StdOut should be protected by Mutex.  
-Now there is no concepts of thread and block, so just  
-introduce a spinlock called spin::Mutex.
+   Now there is no concepts of thread and block, so just  
+   introduce a spinlock called spin::Mutex.
 
     ```RUST
     pub static STDOUT: Mutex<StdOut> = Mutex::new(StdOut);
-
+   
     /* use it by a guard */
     STDOUT.lock().puts("Hello\n");
     ```
@@ -137,3 +137,24 @@ introduce a spinlock called spin::Mutex.
 >   _tval_(badaddr): like 0xffffffff0000XXXX;  
 >
 > Obviously, code in alloc::format accesses virtual aspace address!
+
+### Enable mmu
+
+1. Setup swapper_pgd
+
+   Ignore trampoline, just setup swapping.
+
+2. Detect Paging Mode
+
+   Choose SVxx according to KERNEL_ASPACE_BITS.
+
+3. Relocate to virtual address space
+
+   Use stvec to implement relocate.
+
+### Println! & Panic!
+
+1. Copy macro println! into this project
+2. Implement _print based on sbi putchar
+3. Call println! in Panic! to display information
+4. Panic! ends with power_off which is also based on sbi extention SRST
