@@ -27,7 +27,7 @@ $(TARGET): $(KERNEL)
 	@$(OBJCOPY) $^ -S -R .eh_frame -R .note -R .comment -O binary $@
 
 $(KERNEL): FORCE
-	@cargo xbuild --target riscv64gc-unknown-none-elf --release
+	@cargo build --target riscv64gc-unknown-none-elf --release
 	#-Z build-std=core,alloc -Z build-std-features=compiler-builtins-mem
 	@$(NM) -n $@ | grep -v '\( [aNUw] \)\|\(__crc_\)\|\( \$[adt]\)\|\( \.L\)' > System.map
 
