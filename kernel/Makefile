@@ -6,7 +6,7 @@
 # at https://opensource.org/licenses/MIT
 #
 
-.PHONY: all clean run build asm qemu TARGET FORCE
+.PHONY: all clean run build asm qemu FORCE
 
 BUILDDIR := target/riscv64gc-unknown-none-elf/release/
 KERNEL := $(BUILDDIR)/kernel
