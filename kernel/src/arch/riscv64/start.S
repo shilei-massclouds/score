@@ -7,6 +7,7 @@
  */
 
 /* Todo: define these symbols in a generated file and include it */
+CONFIG_NR_CPUS = 8;
 RISCV_SZPTR = 8;
 PAGE_SHIFT = 12;
 SR_FS = 0x00006000;
@@ -58,7 +59,7 @@ relocate_enable_mmu:
     sfence.vma
 
     /* Set trap vector to spin forever to help debug */
-    la a0, _park
+    la a0, .Lpark
     csrw stvec, a0
 
     /* Reload the global pointer */
@@ -74,11 +75,14 @@ relocate_enable_mmu:
      */
 
     .balign 8
+_hart_lottery:  /* Lottery for electing boot hart */
+    .dword 0
 _satp_mode:
     .dword 0
-
-_hart_lottery:  /* Lottery for electing boot hart */
-    .word 0
+_boot_cpu_hartid:
+    .dword 0
+_dtb_pa:
+    .dword 0
 
     /*
      * Entry
@@ -104,11 +108,16 @@ _start_kernel:
     li t0, SR_FS
     csrc sstatus, t0
 
+    li t0, CONFIG_NR_CPUS
+    blt a0, t0, .Lgood_cores
+    tail .Lpark
+.Lgood_cores:
+
     /* Pick one hart to run the main boot sequence */
     la a3, _hart_lottery
     li a2, 1
-    amoadd.w a3, a2, (a3)
-    bnez a3, _secondary_start
+    amoadd.d a3, a2, (a3)
+    bnez a3, .Lsecondary_start
 
     /* Clear BSS for flat non-ELF images */
     la a3, __bss_start
@@ -121,13 +130,10 @@ clear_bss:
 clear_bss_done:
 
     /* Save hart ID and DTB physical address */
-    mv s0, a0
-    mv s1, a1
-
-    /*
-    la a2, boot_cpu_hartid
+    la a2, _boot_cpu_hartid
     sd a0, (a2)
-    */
+    la a2, _dtb_pa
+    sd a1, (a2)
 
     /* Initialize boot stack */
     la sp, _boot_stack_top
@@ -139,7 +145,7 @@ clear_bss_done:
     call relocate_enable_mmu
 
     //call setup_trap_vector
-    la t0, _park
+    la t0, .Lpark
     csrw stvec, t0
 
     /* Restore C environment */
@@ -148,10 +154,10 @@ clear_bss_done:
     tail lk_main
 
     .balign 4
-_secondary_start:
-    j _secondary_start
+.Lsecondary_start:
+    j .Lsecondary_start
 
     /* Loop forever for debug. */
     .balign 4
-_park: wfi
-    j _park
+.Lpark: wfi
+    j .Lpark
