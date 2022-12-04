@@ -72,4 +72,6 @@ pub const KERNEL_ASPACE_BITS: usize = NBITS!(KERNEL_ASPACE_MASK);
 extern "C" {
     pub fn _start();
     pub fn _end();
+    pub fn _boot_heap();
+    pub fn _boot_heap_end();
 }

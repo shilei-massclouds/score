@@ -15,6 +15,7 @@ use core::arch::global_asm;
 use alloc::string::String;
 use crate::stdio::STDOUT;
 use crate::arch::sbi::machine_power_off;
+use crate::allocator::init_heap;
 
 global_asm!(include_str!("arch/riscv64/start.S"));
 
@@ -22,6 +23,9 @@ extern crate alloc;
 
 #[path = "arch/riscv64/mod.rs"]
 mod arch;
+
+#[macro_use]
+mod align;
 
 mod config_generated;
 mod types;
@@ -33,6 +37,7 @@ mod allocator;
 #[no_mangle]
 fn lk_main() -> ! {
     println!("lk_main ...");
+    init_heap();
     let s = String::from("Test");
     println!("string: {}", s);
     println!("Hello, {}! [{}]", "world", 9);
