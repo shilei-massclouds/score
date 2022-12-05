@@ -90,7 +90,7 @@ fn alloc_error_handler(layout: alloc::alloc::Layout) -> ! {
 #[global_allocator]
 static ALLOCATOR: Locked<BumpAllocator> = Locked::new(BumpAllocator::new());
 
-pub fn init_heap() {
+pub fn boot_heap_earliest_init() {
     let start = _boot_heap as usize;
     let size = _boot_heap_end as usize - start;
     unsafe {

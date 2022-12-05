@@ -13,7 +13,7 @@
 use core::arch::global_asm;
 use alloc::string::String;
 use crate::debug::*;
-use crate::allocator::init_heap;
+use crate::allocator::boot_heap_earliest_init;
 use crate::errors::ErrNO;
 use crate::defines::*;
 use crate::platform::platform_early_init;
@@ -55,6 +55,9 @@ fn lk_main() -> ! {
 
 #[no_mangle]
 fn _lk_main() -> Result<(), ErrNO> {
+    /* prepare heap for rust alloc types */
+    boot_heap_earliest_init();
+
     /* get us into some sort of thread context so Thread::Current works. */
     thread_init_early();
 
@@ -122,7 +125,6 @@ fn _lk_main() -> Result<(), ErrNO> {
     ///////////////////////////
 
     println!("lk_main ...");
-    init_heap();
     let s = String::from("Test");
     println!("string: {}", s);
     println!("Hello, {}! [{}]", "world", 9);
