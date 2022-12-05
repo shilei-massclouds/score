@@ -8,6 +8,26 @@
 
 #![allow(dead_code)]
 
+/* debug print levels */
+pub const CRITICAL  : u32 = 0;
+pub const ALWAYS    : u32 = 0;
+pub const INFO      : u32 = 1;
+pub const SPEW      : u32 = 2;
+
+pub const DEBUG_PRINT_LEVEL: u32 = SPEW;
+
+#[macro_export]
+macro_rules! dprintf {
+    ($level: expr, $($arg:tt)*) => (
+        if $level <= DEBUG_PRINT_LEVEL {
+            print!($($arg)*);
+        }
+    );
+}
+
+/************************************/
+
+/*
 use spin::Mutex;
 use core::fmt;
 use crate::arch::sbi;
@@ -61,3 +81,4 @@ pub static STDOUT: Mutex<StdOut> = Mutex::new(StdOut);
 pub fn _print(args: fmt::Arguments) {
     STDOUT.lock().write_fmt(args).unwrap();
 }
+*/

@@ -15,7 +15,7 @@ pub enum ErrNO {
 
     NotFound,
 
-    //NoDev,
+    NoDev,
 
     NoMem,
 

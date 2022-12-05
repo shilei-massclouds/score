@@ -11,7 +11,7 @@ use core::ptr::null_mut;
 use crate::types::*;
 use crate::defines::*;
 use crate::errors::ErrNO;
-use crate::STDOUT;
+use crate::stdio::STDOUT;
 
 const PAGE_TABLE_ENTRIES: usize = 1 << (PAGE_SHIFT - 3);
 

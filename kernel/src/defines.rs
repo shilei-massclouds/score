@@ -74,4 +74,18 @@ extern "C" {
     pub fn _end();
     pub fn _boot_heap();
     pub fn _boot_heap_end();
+    pub static _kernel_base_phys: usize;
+    pub static _dtb_pa: usize;
+}
+
+pub fn kernel_base_phys() -> usize {
+    unsafe { _kernel_base_phys }
+}
+
+pub fn kernel_size() -> usize {
+    (_end as usize) - (_start as usize)
+}
+
+pub fn dtb_pa() -> usize {
+    unsafe { _dtb_pa }
 }

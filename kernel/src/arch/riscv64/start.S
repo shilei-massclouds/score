@@ -81,6 +81,8 @@ _satp_mode:
     .dword 0
 _boot_cpu_hartid:
     .dword 0
+_kernel_base_phys:
+    .dword 0
 _dtb_pa:
     .dword 0
 
@@ -128,6 +130,11 @@ clear_bss:
     add a3, a3, RISCV_SZPTR
     blt a3, a4, clear_bss
 clear_bss_done:
+
+    /* Save kernel physical base address */
+    la a3, _start
+    la a2, _kernel_base_phys
+    sd a3, (a2)
 
     /* Save hart ID and DTB physical address */
     la a2, _boot_cpu_hartid
