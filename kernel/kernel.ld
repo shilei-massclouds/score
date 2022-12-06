@@ -75,6 +75,10 @@ SECTIONS
         _swapper_tables = .;
         . += PAGE_SIZE * (CONFIG_MMU_MAX_LEVEL - 1);
         _swapper_tables_end = .;
+        /* periph tables_start [aligned] */
+        _periph_tables_start = .;
+        . += PAGE_SIZE * (CONFIG_MMU_MAX_LEVEL - 1);
+        _periph_tables_end = .;
         /* boot heap [aligned] */
         _boot_heap = .;
         . += CONFIG_BOOT_HEAP_SIZE;

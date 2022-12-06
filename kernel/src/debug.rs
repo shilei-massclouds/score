@@ -11,8 +11,9 @@
 /* debug print levels */
 pub const CRITICAL  : u32 = 0;
 pub const ALWAYS    : u32 = 0;
-pub const INFO      : u32 = 1;
-pub const SPEW      : u32 = 2;
+pub const WARN      : u32 = 1;
+pub const INFO      : u32 = 2;
+pub const SPEW      : u32 = 3;
 
 pub const DEBUG_PRINT_LEVEL: u32 = SPEW;
 

@@ -46,6 +46,12 @@ pub const PAGE_KERNEL: usize =
 
 pub const PAGE_KERNEL_EXEC : usize = PAGE_KERNEL | _PAGE_EXEC;
 
+/*
+ * The RISC-V ISA doesn't yet specify how to query or modify PMAs,
+ * so we can't change the properties of memory regions.
+ */
+pub const PAGE_IOREMAP: usize = PAGE_KERNEL;
+
 pub const SATP_MODE_39: usize = 0x8000000000000000;
 pub const SATP_MODE_48: usize = 0x9000000000000000;
 pub const SATP_MODE_57: usize = 0xa000000000000000;
@@ -66,8 +72,8 @@ impl PageTable {
         self.item_present(index) && ((self.0[index] & _PAGE_LEAF) != 0)
     }
 
-    fn item_descend(&self, index: usize) -> *mut PageTable {
-        ((self.0[index] >> _PAGE_PFN_SHIFT) << PAGE_SHIFT) as *mut PageTable
+    fn item_descend(&self, index: usize) -> usize {
+        (self.0[index] >> _PAGE_PFN_SHIFT) << PAGE_SHIFT
     }
 }
 
@@ -98,12 +104,14 @@ pub extern "C" fn setup_vm() {
         }
     };
 
+    let phys_to_virt = |pa: paddr_t| { pa as *mut PageTable };
+
     /*
      * map a large run of physical memory at the base of
      * the kernel's address space.
      */
     let ret = boot_map(KERNEL_ASPACE_BASE, 0, ARCH_PHYSMAP_SIZE,
-                       PAGE_KERNEL, &mut alloc);
+                       PAGE_KERNEL, &mut alloc, &phys_to_virt);
     if let Err(_) = ret {
         STDOUT.lock().puts("map physmap error!\n");
         panic!("map physmap error!");
@@ -112,7 +120,7 @@ pub extern "C" fn setup_vm() {
     /* map the kernel to a fixed address */
     let ret = boot_map(KERNEL_BASE,
                        _start as usize, (_end as usize) - (_start as usize),
-                       PAGE_KERNEL_EXEC, &mut alloc);
+                       PAGE_KERNEL_EXEC, &mut alloc, &phys_to_virt);
     if let Err(_) = ret {
         STDOUT.lock().puts("map kernel image error!\n");
         panic!("map kernel image error!");
@@ -128,19 +136,20 @@ pub extern "C" fn setup_vm() {
     }
 }
 
-pub fn boot_map<F1>(vaddr: vaddr_t, paddr: paddr_t, len: usize,
-                    prot: prot_t, alloc: &mut F1) -> Result<(), ErrNO>
-    where F1: FnMut() -> *mut PageTable {
+pub fn boot_map<F1, F2>(vaddr: vaddr_t, paddr: paddr_t, len: usize,
+                        prot: prot_t, alloc: &mut F1, phys_to_virt: &F2)
+    -> Result<(), ErrNO>
+    where F1: FnMut() -> *mut PageTable, F2: Fn(paddr_t) -> *mut PageTable {
 
     /* Loop through the virtual range and map each physical page,
      * using the largest page size supported.
      * Allocates necessar page tables along the way. */
     unsafe {
     STDOUT.lock().puts("boot_map[");
-    STDOUT.lock().put_u64(&mut _swapper_pgd as *mut PageTable as u64);
+    STDOUT.lock().put_u64(KERNEL_ASPACE_BITS as u64);
     STDOUT.lock().puts("]boot_map\n");
-        _boot_map(&mut _swapper_pgd, 0,
-                  vaddr, paddr, len, prot, alloc)
+        _boot_map(&mut _swapper_pgd, 0, vaddr, paddr, len, prot,
+                  alloc, phys_to_virt)
     }
 }
 
@@ -187,11 +196,10 @@ fn aligned_in_level(addr: usize, level: usize) -> bool {
     (addr & !(LEVEL_MASK!(level))) == 0
 }
 
-fn _boot_map<F1>(table: &mut PageTable, level: usize,
-                 vaddr: vaddr_t, paddr: paddr_t, len: usize,
-                 prot: prot_t,
-                 alloc: &mut F1) -> Result<(), ErrNO>
-    where F1: FnMut() -> *mut PageTable {
+fn _boot_map<F1, F2>(table: &mut PageTable, level: usize,
+                     vaddr: vaddr_t, paddr: paddr_t, len: usize, prot: prot_t,
+                     alloc: &mut F1, phys_to_virt: &F2) -> Result<(), ErrNO>
+    where F1: FnMut() -> *mut PageTable, F2: Fn(paddr_t) -> *mut PageTable {
 
     let mut off = 0;
     while off < len {
@@ -205,6 +213,7 @@ fn _boot_map<F1>(table: &mut PageTable, level: usize,
         }
         STDOUT.lock().puts("step2\n");
         if !table.item_present(index) {
+            STDOUT.lock().puts("step2.0\n");
             if (level != 0) &&
                 aligned_in_level(vaddr+off, level) &&
                 aligned_in_level(paddr+off, level) &&
@@ -218,23 +227,24 @@ fn _boot_map<F1>(table: &mut PageTable, level: usize,
                 off += LEVEL_SIZE!(level);
                 continue;
             }
+            STDOUT.lock().puts("step2.2\n");
 
             let pa: usize = alloc() as usize;
             table.mk_item(index, PA_TO_PFN!(pa), PAGE_TABLE);
         }
-        STDOUT.lock().puts("step3\n");
+        STDOUT.lock().puts("step3.1\n");
         if table.item_leaf(index) {
             /* not legal as a leaf at this level */
             return Err(ErrNO::BadState);
         }
         STDOUT.lock().puts("step4\n");
 
-        let lower_table_ptr = table.item_descend(index);
+        let lower_table_ptr = phys_to_virt(table.item_descend(index));
         let lower_len = min(LEVEL_SIZE!(level), len-off);
         unsafe {
             _boot_map(&mut (*lower_table_ptr), level+1,
                       vaddr+off, paddr+off, lower_len,
-                      prot, alloc)?;
+                      prot, alloc, phys_to_virt)?;
         }
 
         off += LEVEL_SIZE!(level);

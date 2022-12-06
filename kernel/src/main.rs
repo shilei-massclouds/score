@@ -43,6 +43,7 @@ mod types;
 mod defines;
 mod errors;
 mod allocator;
+mod pmm;
 
 #[no_mangle]
 fn lk_main() -> ! {
@@ -55,7 +56,7 @@ fn lk_main() -> ! {
 
 #[no_mangle]
 fn _lk_main() -> Result<(), ErrNO> {
-    /* prepare heap for rust alloc types */
+    /* prepare heap for rust types (as string, vec, etc.) */
     boot_heap_earliest_init();
 
     /* get us into some sort of thread context so Thread::Current works. */

@@ -6,6 +6,10 @@
  * at https://opensource.org/licenses/MIT
  */
 
+#![allow(dead_code)]
+
+use crate::types::*;
+use crate::ZX_DEBUG_ASSERT;
 use crate::config_generated::*;
 
 pub const PAGE_SHIFT    : usize = _CONFIG_PAGE_SHIFT;
@@ -74,7 +78,10 @@ extern "C" {
     pub fn _end();
     pub fn _boot_heap();
     pub fn _boot_heap_end();
+    pub fn _periph_tables_start();
+    pub fn _periph_tables_end();
     pub static _kernel_base_phys: usize;
+    pub static _boot_cpu_hartid: usize;
     pub static _dtb_pa: usize;
 }
 
@@ -82,10 +89,56 @@ pub fn kernel_base_phys() -> usize {
     unsafe { _kernel_base_phys }
 }
 
+pub fn kernel_base_virt() -> usize {
+    _start as usize
+}
+
 pub fn kernel_size() -> usize {
     (_end as usize) - (_start as usize)
 }
 
+pub fn boot_cpu_id() -> usize {
+    unsafe { _boot_cpu_hartid }
+}
+
 pub fn dtb_pa() -> usize {
     unsafe { _dtb_pa }
+}
+
+pub fn periph_tables_start() -> usize {
+    _periph_tables_start as usize
+}
+
+pub fn periph_tables_end() -> usize {
+    _periph_tables_end as usize
+}
+
+const PHYSMAP_BASE: usize = KERNEL_ASPACE_BASE;
+const PHYSMAP_SIZE: usize = ARCH_PHYSMAP_SIZE;
+const PHYSMAP_BASE_PHYS: usize = 0;
+
+// check to see if an address is in the physmap virtually and physically
+pub fn is_physmap_addr(va: vaddr_t) -> bool {
+    va >= PHYSMAP_BASE && (va - PHYSMAP_BASE < PHYSMAP_SIZE)
+}
+
+pub fn is_physmap_phys_addr(pa: paddr_t) -> bool {
+    pa - PHYSMAP_BASE_PHYS < PHYSMAP_SIZE
+}
+
+/* physical to virtual in the big kernel map */
+pub fn paddr_to_physmap(pa: paddr_t) -> vaddr_t {
+    pa - PHYSMAP_BASE_PHYS + PHYSMAP_BASE
+}
+
+/* given a pointer into the physmap, reverse back to a physical address */
+pub fn physmap_to_paddr(va: vaddr_t) -> paddr_t {
+    ZX_DEBUG_ASSERT!(is_physmap_addr(va));
+    va - PHYSMAP_BASE + PHYSMAP_BASE_PHYS
+}
+
+/* given a pointer into the physmap, reverse back to a physical address */
+pub fn kernel_va_to_pa(va: vaddr_t) -> paddr_t {
+    ZX_DEBUG_ASSERT!(!is_physmap_addr(va));
+    va - kernel_base_virt() + kernel_base_phys()
 }
