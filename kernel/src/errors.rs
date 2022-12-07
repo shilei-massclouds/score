@@ -9,11 +9,13 @@
 #[allow(dead_code)]
 
 #[derive(Debug)]
+#[derive(PartialEq)]
 pub enum ErrNO {
     /* Indicates an operation was successful. */
     _OK,
 
     NotFound,
+    NotSupported,
 
     NoDev,
 

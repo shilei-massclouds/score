@@ -7,7 +7,7 @@
  */
 
 use core::slice;
-use crate::{print, dprintf};
+use crate::{print, dprintf, ZX_DEBUG_ASSERT, IS_PAGE_ALIGNED, IS_ALIGNED};
 use crate::debug::*;
 use crate::types::*;
 use alloc::vec::Vec;
@@ -17,8 +17,10 @@ use crate::platform::boot_reserve::boot_reserve_init;
 use crate::pmm::{MAX_ARENAS, ArenaInfo};
 use device_tree::DeviceTree;
 use crate::platform::periphmap::add_periph_range;
+use crate::platform::boot_reserve::boot_reserve_add_range;
+use crate::pmm::pmm_add_arena;
 
-mod boot_reserve;
+pub mod boot_reserve;
 mod periphmap;
 
 pub const MAX_ZBI_MEM_RANGES: usize = 32;
@@ -52,10 +54,10 @@ pub fn platform_early_init() -> Result<(), ErrNO> {
     /* initialize the boot memory reservation system */
     boot_reserve_init(kernel_base_phys(), kernel_size())?;
 
-    let mem_arenas = process_dtb_early()?;
+    let mut mem_arenas = process_dtb_early()?;
 
     /* is the cmdline option to bypass dlog set ? */
-    //dlog_bypass_init();
+    dlog_bypass_init();
 
     /* Serial port should be active now */
 
@@ -66,60 +68,66 @@ pub fn platform_early_init() -> Result<(), ErrNO> {
     */
 
     /* Initialize the PmmChecker now that the cmdline has been parsed. */
-    //pmm_checker_init_from_cmdline();
-
-    /* Add the data ZBI ramdisk to the boot reserve memory list. */
-    /*
-    ktl::span zbi = ZbiInPhysmap();
-    paddr_t ramdisk_start_phys = physmap_to_paddr(zbi.data());
-    paddr_t ramdisk_end_phys =
-        ramdisk_start_phys + ROUNDUP_PAGE_SIZE(zbi.size_bytes());
-    dprintf!(INFO, "reserving ramdisk phys range [{:x}, {:x}]\n",
-             ramdisk_start_phys, ramdisk_end_phys - 1);
-
-    boot_reserve_add_range(ramdisk_start_phys,
-                           ramdisk_end_phys - ramdisk_start_phys);
-    */
+    pmm_checker_init_from_cmdline();
 
     /*
      * check if a memory limit was passed in via kernel.memory-limit-mb and
      * find memory ranges to use if one is found.
      */
-//    zx_status_t status = memory_limit_init();
-//    bool have_limit = (status == ZX_OK);
-//    for (size_t i = 0; i < arena_count; i++) {
-//        if (have_limit) {
-//            /*
-//             * Figure out and add arenas based on the memory limit and
-//             * our range of DRAM
-//             */
-//            status = memory_limit_add_range(mem_arena[i].base,
-//                                            mem_arena[i].size,
-//                                            mem_arena[i]);
-//        }
-//
-//        /*
-//         * If no memory limit was found, or adding arenas from the range failed,
-//         * then add the existing global arena.
-//         */
-//        if (!have_limit || status != ZX_OK) {
-//            /* Init returns not supported if no limit exists */
-//            if (status != ZX_ERR_NOT_SUPPORTED) {
-//                dprintf!(INFO, "memory limit lib returned an error (%d),
-//                         falling back to defaults\n", status);
-//            }
-//            pmm_add_arena(&mem_arena[i]);
-//        }
-//    }
-//
-//    /* add any pending memory arenas the memory limit library has pending */
-//    if (have_limit) {
-//        status = memory_limit_add_arenas(mem_arena[0]);
-//        ZX_DEBUG_ASSERT(status == ZX_OK);
-//    }
+    let have_limit = memory_limit_init().is_ok();
+    /* find memory ranges to use if one is found. */
+    while let Some(arena) = mem_arenas.pop() {
+        if have_limit {
+            /*
+             * Figure out and add arenas based on the memory limit and
+             * our range of DRAM
+             */
+            match memory_limit_add_range(arena.base, arena.size) {
+                Ok(_) => continue,
+                Err(err) => {
+                    if let ErrNO::NotSupported = err {
+                    } else {
+                        dprintf!(WARN, "memory limit lib returned an error {:?},
+                                 falling back to defaults\n", err);
+                    }
+                }
+            }
+        }
+
+        /*
+         * If no memory limit was found, or adding arenas from the range failed,
+         * then add the existing global arena.
+         */
+
+        /* Init returns not supported if no limit exists */
+        pmm_add_arena(arena)?;
+    }
+
+    /* add any pending memory arenas the memory limit library has pending */
+    if have_limit {
+        ZX_DEBUG_ASSERT!(memory_limit_add_arenas().is_ok());
+    }
 
     /* tell the boot allocator to mark ranges we've reserved as off limits */
     boot_reserve_wire()
+}
+
+fn memory_limit_init() -> Result<(), ErrNO> {
+    Err(ErrNO::NotSupported)
+}
+
+fn memory_limit_add_range(_base: paddr_t, _size: usize) -> Result<(), ErrNO> {
+    todo!();
+}
+
+fn memory_limit_add_arenas() -> Result<(), ErrNO> {
+    todo!();
+}
+
+fn dlog_bypass_init() {
+}
+
+fn pmm_checker_init_from_cmdline() {
 }
 
 fn boot_reserve_wire() -> Result<(), ErrNO> {
@@ -268,6 +276,27 @@ fn early_init_dt_scan_chosen(dt: &DeviceTree) -> &str {
         }
     };
 
+    /* Add the data ZBI ramdisk to the boot reserve memory list. */
+    /* For RiscV, parse initrd in dtb, as below:
+        chosen {
+            linux,initrd-start = <0x82000000>;
+            linux,initrd-end = <0x82800000>;
+        };
+    */
+    if chosen.has_prop("linux,initrd-start") &&
+       chosen.has_prop("linux,initrd-end") {
+        let start =
+            chosen.prop_u32_at("linux,initrd-start", 0).unwrap() as paddr_t;
+        let end =
+            chosen.prop_u32_at("linux,initrd-end", 0).unwrap() as paddr_t;
+
+        ZX_DEBUG_ASSERT!(IS_PAGE_ALIGNED!(end));
+        dprintf!(INFO, "reserving ramdisk phys range [{:x}, {:x}]\n",
+                 start, end - 1);
+
+        boot_reserve_add_range(start, end - start).unwrap();
+    }
+
     /* Retrieve command line */
     if let Ok(s) = chosen.prop_str("bootargs") {
         return s;
@@ -284,8 +313,7 @@ fn early_init_dt_scan_memory(dt: &DeviceTree, addr_cells: u32, size_cells: u32)
 
     let root = dt.find("/").ok_or_else(|| ErrNO::BadDTB)?;
 
-    let mut mem_config =
-        Vec::<ZBIMemRange>::with_capacity(MAX_ZBI_MEM_RANGES);
+    let mut mem_config = Vec::<ZBIMemRange>::with_capacity(MAX_ZBI_MEM_RANGES);
 
     for child in &root.children {
         /* We are scanning "memory" nodes only */

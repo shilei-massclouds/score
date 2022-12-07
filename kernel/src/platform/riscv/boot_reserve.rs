@@ -15,7 +15,8 @@ use spin::Mutex;
 
 pub const MAX_RESERVES: usize = 64;
 
-struct BootReserveRange {
+#[derive(Default)]
+pub struct BootReserveRange {
     pub pa: paddr_t,
     pub len: usize,
 }
@@ -27,7 +28,7 @@ pub fn boot_reserve_init(pa: paddr_t, len: usize) -> Result<(), ErrNO> {
     boot_reserve_add_range(pa, len)
 }
 
-fn boot_reserve_add_range(pa: usize, len: usize) -> Result<(), ErrNO> {
+pub fn boot_reserve_add_range(pa: usize, len: usize) -> Result<(), ErrNO> {
     dprintf!(INFO, "PMM: boot reserve add [0x{:x}, 0x{:x}]\n",
              pa, pa + len - 1);
 
@@ -81,4 +82,44 @@ fn intersects(offset1: usize, len1: usize,
     }
 
     true
+}
+
+pub fn boot_reserve_range_search(range_pa: paddr_t, range_len: usize,
+                                 alloc_len: usize,
+                                 alloc_range: &mut BootReserveRange)
+    -> Result<(), ErrNO> {
+
+    dprintf!(INFO, "range pa {:x} len {:x} alloc_len {:x}\n",
+             range_pa, range_len, alloc_len);
+
+    let mut alloc_pa = upper_align(range_pa, range_len, alloc_len);
+
+    /* see if it intersects any reserved range */
+    dprintf!(INFO, "trying alloc range {:x} len {:x}\n",
+             alloc_pa, alloc_len);
+
+    let res = RESERVE_RANGES.lock();
+    'retry: loop {
+        for r in res.iter() {
+            if intersects(r.pa, r.len, alloc_pa, alloc_len) {
+                alloc_pa = r.pa - alloc_len;
+                /* make sure this still works with input constraints */
+                if alloc_pa < range_pa {
+                    return Err(ErrNO::NoMem);
+                }
+
+                continue 'retry;
+            }
+        }
+
+        break;
+    }
+
+    alloc_range.pa = alloc_pa;
+    alloc_range.len = alloc_len;
+    Ok(())
+}
+
+fn upper_align(r_pa: paddr_t, r_len: usize, alloc_len: usize) -> paddr_t {
+    r_pa + r_len - alloc_len
 }

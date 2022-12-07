@@ -9,6 +9,8 @@
 #![no_std]
 #![no_main]
 #![feature(alloc_error_handler)]
+#![feature(const_mut_refs)]
+#![feature(const_nonnull_new)]
 
 use core::arch::global_asm;
 use alloc::string::String;
@@ -17,6 +19,7 @@ use crate::allocator::boot_heap_earliest_init;
 use crate::errors::ErrNO;
 use crate::defines::*;
 use crate::platform::platform_early_init;
+use crate::pmm::PMM_NODE;
 
 global_asm!(include_str!("arch/riscv64/start.S"));
 
@@ -42,8 +45,11 @@ mod config_generated;
 mod types;
 mod defines;
 mod errors;
+mod klib;
 mod allocator;
 mod pmm;
+mod page;
+mod vm_page_state;
 
 #[no_mangle]
 fn lk_main() -> ! {
@@ -146,6 +152,7 @@ fn dlog_init_early() {
 
 /* deal with any static constructors */
 fn call_constructors() {
+    PMM_NODE.lock().init();
 }
 
 fn arch_early_init() {

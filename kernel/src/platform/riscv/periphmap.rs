@@ -57,14 +57,12 @@ pub fn add_periph_range(base_phys: usize, length: usize) -> Result<(), ErrNO> {
     dprintf!(INFO, "periph_table: {:x}\n", periph_tables_start());
 
     let mut alloc = || {
+        #[allow(non_upper_case_globals)]
         static mut pos: usize = 0;
         unsafe {
             if pos == 0 {
                 pos = periph_tables_start();
             } else if pos >= periph_tables_end() {
-                crate::stdio::STDOUT.lock().puts("!!!null!!!\n");
-                crate::stdio::STDOUT.lock().put_u64(pos as u64);
-                crate::stdio::STDOUT.lock().puts("!!!null!!!\n");
                 return null_mut();
             }
             let cur = pos;
