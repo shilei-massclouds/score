@@ -20,6 +20,7 @@ use crate::errors::ErrNO;
 use crate::defines::*;
 use crate::platform::platform_early_init;
 use crate::pmm::PMM_NODE;
+use crate::aspace::vm_init_preheap;
 
 global_asm!(include_str!("arch/riscv64/start.S"));
 
@@ -50,6 +51,7 @@ mod allocator;
 mod pmm;
 mod page;
 mod vm_page_state;
+mod aspace;
 
 #[no_mangle]
 fn lk_main() -> ! {
@@ -125,7 +127,7 @@ fn _lk_main() -> Result<(), ErrNO> {
 
     /* perform basic virtual memory setup */
     dprintf!(SPEW, "initializing vm pre-heap\n");
-    vm_init_preheap();
+    vm_init_preheap()?;
     // lk_primary_cpu_init_level(LK_INIT_LEVEL_VM_PREHEAP,
     //                           LK_INIT_LEVEL_HEAP - 1);
 
@@ -161,7 +163,4 @@ fn arch_early_init() {
 fn dtb_from_phys() {
     dprintf!(ALWAYS, "kernel image phys [{:x}, {:x}] dtb_phys: {:x} ... \n",
              kernel_base_phys(), kernel_size(), dtb_pa());
-}
-
-fn vm_init_preheap() {
 }
