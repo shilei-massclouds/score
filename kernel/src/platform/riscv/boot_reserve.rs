@@ -12,6 +12,7 @@ use alloc::vec::Vec;
 use crate::debug::*;
 use crate::{dprintf, print, ZX_DEBUG_ASSERT};
 use spin::Mutex;
+use crate::klib::range::intersects;
 
 pub const MAX_RESERVES: usize = 64;
 
@@ -60,28 +61,6 @@ pub fn boot_reserve_add_range(pa: usize, len: usize) -> Result<(), ErrNO> {
 
     dprintf!(INFO, "Boot reserve #range {}\n", res.len());
     Ok(())
-}
-
-/* given two offset/length pairs, determine if they overlap at all */
-#[inline]
-fn intersects(offset1: usize, len1: usize,
-              offset2: usize, len2: usize) -> bool {
-    /* Can't overlap a zero-length region. */
-    if len1 == 0 || len2 == 0 {
-        return false;
-    }
-
-    if offset1 <= offset2 {
-        /* doesn't intersect, 1 is completely below 2 */
-        if offset1 + len1 <= offset2 {
-            return false;
-        }
-    } else if offset1 >= offset2 + len2 {
-        /* 1 is completely above 2 */
-        return false;
-    }
-
-    true
 }
 
 pub fn boot_reserve_range_search(range_pa: paddr_t, range_len: usize,

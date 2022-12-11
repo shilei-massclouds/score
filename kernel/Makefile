@@ -22,6 +22,7 @@ NM = $(CROSS_COMPILE)nm
 all: build
 
 build: $(TARGET)
+	@ctags -R .
 
 $(TARGET): $(KERNEL)
 	@$(OBJCOPY) $^ -S -R .eh_frame -R .note -R .comment -O binary $@

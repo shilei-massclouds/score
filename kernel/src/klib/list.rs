@@ -75,6 +75,25 @@ impl<T: Linked<T>> List<T> {
         list
     }
 
+    pub fn add_head(&mut self, mut elt: NonNull<T>) {
+        unsafe { self.add_head_node(elt.as_mut().into_node()); }
+    }
+
+    /* Adds the given node to the head of the list. */
+    #[inline]
+    fn add_head_node(&mut self, node: &mut ListNode) {
+        node.next = self.node.next;
+        node.prev = self.ref_node;
+        let node = Some(node.into());
+
+        if let Some(next) = self.node.next {
+            unsafe {(*next.as_ptr()).prev = node;}
+        }
+        self.node.next = node;
+
+        self.len += 1;
+    }
+
     /* Adds the given node to the tail of the list. */
     #[inline]
     fn add_tail_node(&mut self, node: &mut ListNode) {
@@ -120,5 +139,7 @@ impl<T: Linked<T>> List<T> {
 }
 
 unsafe impl Send for ListNode {}
+unsafe impl Sync for ListNode {}
 
 unsafe impl<T: Send + Linked<T>> Send for List<T> {}
+unsafe impl<T: Sync + Linked<T>> Sync for List<T> {}
