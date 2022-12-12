@@ -20,23 +20,23 @@ SECTIONS
     . = KERNEL_BASE;
     _start = .;
 
+    /* Start of text section */
+    _text_start = .;
+
     .text.entry : AT(ADDR(.text.entry) - KERNEL_BASE) {
         KEEP(*(.text.entry))
     }
 
     . = ALIGN(PAGE_SIZE);
 
-    /* Start of text section */
-    _stext = .;
-    _text = .;
     .text : AT(ADDR(.text) - KERNEL_BASE) {
         *(.text* .sram.text)
     }
-    _etext = .;
+    _text_end = .;
 
-    /* Start of data section */
+    /* Start of rodata section */
     . = ALIGN(PAGE_SIZE);
-    _sdata = .;
+    _rodata_start = .;
 
     .rodata : AT(ADDR(.rodata) - KERNEL_BASE) {
         *(.rodata*)
@@ -44,9 +44,10 @@ SECTIONS
     .srodata : AT(ADDR(.srodata) - KERNEL_BASE) {
         *(.srodata*)
     }
+    _rodata_end = .;
 
-    /* Start of bss section */
     . = ALIGN(PAGE_SIZE);
+    _data_start = .;
     .data : AT(ADDR(.data) - KERNEL_BASE) {
         *(.data .data.*)
     }
@@ -54,14 +55,11 @@ SECTIONS
         __global_pointer$ = . + 0x800;
         *(.sdata*)
     }
+    _data_end = .;
 
-    /* End of data section */
-    _edata = .;
-
+    /* Start of bss section */
     . = ALIGN(PAGE_SIZE);
-
-    . = ALIGN(PAGE_SIZE);
-    __bss_start = .;
+    _bss_start = .;
     .bss : AT(ADDR(.bss) - KERNEL_BASE) {
         /* boot stack [aligned] */
         _boot_stack = .;
@@ -92,7 +90,7 @@ SECTIONS
         *(.sbss)
         *(.scommon)
     }
-    __bss_stop = .;
+    _bss_end = .;
 
     . = ALIGN(PAGE_SIZE);
     _end = .;

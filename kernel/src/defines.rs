@@ -27,6 +27,12 @@ pub const KERNEL_ASPACE_SIZE: usize =
 
 pub const KERNEL_ASPACE_MASK: usize = KERNEL_ASPACE_SIZE - 1;
 
+pub const HEAP_MAX_SIZE_MB: usize = _CONFIG_HEAP_MAX_SIZE_MB;
+pub const ARCH_HEAP_ALIGN_BITS: usize = _CONFIG_ARCH_HEAP_ALIGN_BITS;
+
+/* Const units */
+pub const MB: usize = 1024 * 1024;
+
 /* clang-format off */
 macro_rules! IFTE {
     ($c: expr, $t: expr, $e: expr) => {
@@ -75,6 +81,14 @@ pub const KERNEL_ASPACE_BITS: usize = NBITS!(KERNEL_ASPACE_MASK);
 /* These symbols come from kernel.ld */
 extern "C" {
     pub fn _start();
+    pub fn _text_start();
+    pub fn _text_end();
+    pub fn _rodata_start();
+    pub fn _rodata_end();
+    pub fn _data_start();
+    pub fn _data_end();
+    pub fn _bss_start();
+    pub fn _bss_end();
     pub fn _end();
     pub fn _boot_heap();
     pub fn _boot_heap_end();
@@ -113,9 +127,9 @@ pub fn periph_tables_end() -> usize {
     _periph_tables_end as usize
 }
 
-const PHYSMAP_BASE: usize = KERNEL_ASPACE_BASE;
-const PHYSMAP_SIZE: usize = ARCH_PHYSMAP_SIZE;
-const PHYSMAP_BASE_PHYS: usize = 0;
+pub const PHYSMAP_BASE: usize = KERNEL_ASPACE_BASE;
+pub const PHYSMAP_SIZE: usize = ARCH_PHYSMAP_SIZE;
+pub const PHYSMAP_BASE_PHYS: usize = 0;
 
 // check to see if an address is in the physmap virtually and physically
 pub fn is_physmap_addr(va: vaddr_t) -> bool {

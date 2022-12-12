@@ -52,6 +52,7 @@ mod pmm;
 mod page;
 mod vm_page_state;
 mod aspace;
+mod vm;
 
 #[no_mangle]
 fn lk_main() -> ! {

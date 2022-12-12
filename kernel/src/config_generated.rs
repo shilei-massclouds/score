@@ -7,3 +7,6 @@ pub const _CONFIG_BOOT_HEAP_SIZE: usize = 0x20000;
 pub const _CONFIG_KERNEL_ASPACE_BASE: usize = 0xffff_0000_0000_0000;
 pub const _CONFIG_ARCH_PHYSMAP_SIZE: usize = 1 << 39;
 pub const _CONFIG_MMU_MAX_LEVEL: usize = 5;
+pub const _CONFIG_HEAP_MAX_SIZE_MB: usize = 2048;
+pub const _CONFIG_ARCH_HEAP_ALIGN_BITS: usize = 21;
+

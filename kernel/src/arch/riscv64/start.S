@@ -122,8 +122,8 @@ _start_kernel:
     bnez a3, .Lsecondary_start
 
     /* Clear BSS for flat non-ELF images */
-    la a3, __bss_start
-    la a4, __bss_stop
+    la a3, _bss_start
+    la a4, _bss_end
     ble a4, a3, clear_bss_done
 clear_bss:
     sd zero, (a3)
