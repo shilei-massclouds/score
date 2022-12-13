@@ -9,6 +9,7 @@
 use spin::lazy::Lazy;
 use crate::types::*;
 use crate::defines::*;
+use crate::debug::*;
 
 pub const ARCH_MMU_FLAG_PERM_USER:      usize = 1 << 2;
 pub const ARCH_MMU_FLAG_PERM_READ:      usize = 1 << 3;
@@ -56,4 +57,29 @@ static KERNEL_REGIONS: Lazy<[KernelRegion; 4]> = Lazy::new(|| [
 
 pub fn kernel_regions_base() -> usize {
     KERNEL_REGIONS[0].base
+}
+
+// mark a range of physical pages as WIRED
+pub fn mark_pages_in_use(pa: paddr_t, len: usize) {
+    dprintf!(INFO, "pa {:x}, len {:x}\n", pa, len);
+
+    /* make sure we are inclusive of all of the pages in the address range */
+    let len = PAGE_ALIGN!(len + (pa & (PAGE_SIZE - 1)));
+    let pa = ROUNDDOWN!(pa, PAGE_SIZE);
+
+    dprintf!(INFO, "aligned pa {:x}, len {:x}\n", pa, len);
+
+    /*
+  list_node list = LIST_INITIAL_VALUE(list);
+
+  zx_status_t status = pmm_alloc_range(pa, len / PAGE_SIZE, &list);
+  ASSERT_MSG(status == ZX_OK, "failed to reserve memory range [%#" PRIxPTR ", %#" PRIxPTR "]\n", pa,
+             pa + len - 1);
+
+  // mark all of the pages we allocated as WIRED
+  vm_page_t* p;
+  list_for_every_entry (&list, p, vm_page_t, queue_node) {
+    p->set_state(vm_page_state::WIRED);
+  }
+  */
 }

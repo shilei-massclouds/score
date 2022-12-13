@@ -29,7 +29,7 @@ pub fn boot_reserve_init(pa: paddr_t, len: usize) -> Result<(), ErrNO> {
     boot_reserve_add_range(pa, len)
 }
 
-pub fn boot_reserve_add_range(pa: usize, len: usize) -> Result<(), ErrNO> {
+pub fn boot_reserve_add_range(pa: paddr_t, len: usize) -> Result<(), ErrNO> {
     dprintf!(INFO, "PMM: boot reserve add [0x{:x}, 0x{:x}]\n",
              pa, pa + len - 1);
 

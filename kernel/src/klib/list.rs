@@ -75,6 +75,10 @@ impl<T: Linked<T>> List<T> {
         list
     }
 
+    pub fn empty(&self) -> bool {
+        self.len == 0
+    }
+
     pub fn add_head(&mut self, mut elt: NonNull<T>) {
         unsafe { self.add_head_node(elt.as_mut().into_node()); }
     }

@@ -12,6 +12,10 @@ use crate::klib::list::{Linked, ListNode};
 use crate::vm_page_state;
 use crate::vm_page_state::vm_page_state_t;
 
+  // logically private, use loaned getters and setters below.
+const kLoanedStateIsLoaned: u8 = 1;
+const kLoanedStateIsLoanCancelled: u8 = 2;
+
 #[allow(non_camel_case_types)]
 pub struct vm_page {
     /* linked node */
@@ -28,7 +32,7 @@ pub struct vm_page {
     /* offset 0x2c */
 
     /* logically private, use loaned getters and setters below. */
-    _loaned_state: AtomicU8,
+    loaned_state: AtomicU8,
 }
 
 impl Linked<vm_page> for vm_page {
@@ -43,12 +47,20 @@ impl vm_page {
             queue_node: ListNode::new(),
             paddr: 0,
             state: AtomicU8::new(vm_page_state::FREE),
-            _loaned_state: AtomicU8::new(0),
+            loaned_state: AtomicU8::new(0),
         }
     }
 
     pub fn init(&mut self, paddr: paddr_t) {
         self.paddr = paddr;
+    }
+
+    pub fn paddr(&self) -> paddr_t {
+        self.paddr
+    }
+
+    pub fn state(&self) -> u8 {
+        self.state.load(Ordering::Relaxed)
     }
 
     pub fn set_state(&mut self, new_state: vm_page_state_t) {
@@ -58,6 +70,23 @@ impl vm_page {
             p.vm_page_counts.by_state[VmPageStateIndex(old_state)] -= 1;
             p.vm_page_counts.by_state[VmPageStateIndex(new_state)] += 1;
         */
+    }
+
+    pub fn is_free(&self) -> bool {
+        self.state() == vm_page_state::FREE
+    }
+
+    /* If true, this page is "loaned" in the sense of being loaned from
+     * a contiguous VMO (via decommit) to Zircon. If the original contiguous VMO
+     * is deleted, this page will no longer be loaned. A loaned page cannot be pinned.
+     * Instead a different physical page (non-loaned) is used for the pin.
+     * A loaned page can be (re-)committed back into its original contiguous VMO,
+     * which causes the data in the loaned page to be moved into
+     * a different physical page (which itself can be non-loaned or loaned).
+     * A loaned page cannot be used to allocate a new contiguous VMO. */
+    pub fn is_loaned(&self) -> bool {
+        let loaned_state = self.loaned_state.load(Ordering::Relaxed);
+        loaned_state & kLoanedStateIsLoaned == kLoanedStateIsLoaned
     }
 }
 

@@ -9,7 +9,7 @@
 use alloc::alloc::{GlobalAlloc, Layout};
 use core::ptr::null_mut;
 use spin::{Mutex, MutexGuard};
-use crate::defines::{_boot_heap, _boot_heap_end};
+use crate::{defines::{_boot_heap, _boot_heap_end, physmap_to_paddr, kernel_va_to_pa}, vm::mark_pages_in_use};
 
 extern crate alloc;
 
@@ -96,4 +96,12 @@ pub fn boot_heap_earliest_init() {
     unsafe {
         ALLOCATOR.lock().init(start, size);
     }
+}
+
+pub fn boot_heap_mark_pages_in_use() {
+    let allocator = ALLOCATOR.lock();
+
+    let start = kernel_va_to_pa(allocator.start);
+    let end = kernel_va_to_pa(allocator.next);
+    mark_pages_in_use(start, end - start);
 }

@@ -14,6 +14,7 @@ use crate::debug::*;
 use crate::vm::*;
 use crate::{KERNEL_ASPACE_BASE, KERNEL_ASPACE_SIZE};
 use crate::{ErrNO, types::vaddr_t, ZX_DEBUG_ASSERT};
+use crate::allocator::boot_heap_mark_pages_in_use;
 
 /* Allow VmMappings to be created inside the new region with the SPECIFIC
  * or OFFSET_IS_UPPER_LIMIT flag. */
@@ -275,15 +276,10 @@ pub fn vm_init_preheap() -> Result<(), ErrNO> {
 
     vm_init_preheap_vmars();
 
+    /* mark the physical pages used by the boot time allocator */
+    boot_heap_mark_pages_in_use();
+
     /*
-  // mark the physical pages used by the boot time allocator
-  if (boot_alloc_end != boot_alloc_start) {
-    dprintf(INFO, "VM: marking boot alloc used range [%#" PRIxPTR ", %#" PRIxPTR ")\n",
-            boot_alloc_start, boot_alloc_end);
-
-    MarkPagesInUsePhys(boot_alloc_start, boot_alloc_end - boot_alloc_start);
-  }
-
   zx_status_t status;
 
   // grab a page and mark it as the zero page
