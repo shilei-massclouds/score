@@ -10,10 +10,10 @@ use spin::lazy::Lazy;
 use crate::types::*;
 use crate::defines::*;
 
-const ARCH_MMU_FLAG_PERM_USER:      usize = 1 << 2;
-const ARCH_MMU_FLAG_PERM_READ:      usize = 1 << 3;
-const ARCH_MMU_FLAG_PERM_WRITE:     usize = 1 << 4;
-const ARCH_MMU_FLAG_PERM_EXECUTE:   usize = 1 << 5;
+pub const ARCH_MMU_FLAG_PERM_USER:      usize = 1 << 2;
+pub const ARCH_MMU_FLAG_PERM_READ:      usize = 1 << 3;
+pub const ARCH_MMU_FLAG_PERM_WRITE:     usize = 1 << 4;
+pub const ARCH_MMU_FLAG_PERM_EXECUTE:   usize = 1 << 5;
 
 /* List of the kernel program's various segments. */
 struct KernelRegion {

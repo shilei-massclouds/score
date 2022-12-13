@@ -11,7 +11,7 @@ use spin::Mutex;
 use core::cmp::max;
 use crate::defines::*;
 use crate::debug::*;
-use crate::vm::kernel_regions_base;
+use crate::vm::*;
 use crate::{KERNEL_ASPACE_BASE, KERNEL_ASPACE_SIZE};
 use crate::{ErrNO, types::vaddr_t, ZX_DEBUG_ASSERT};
 
@@ -158,52 +158,92 @@ impl VmAddressRegion {
      * from the address space, and can vary based on whether the user has
      * requested compact allocations or not.
      */
-    fn alloc_spot_locked(size: usize, align_pow2: usize, arch_mmu_flags: usize, upper_limit: vaddr_t)
-        -> vaddr_t {
+    fn alloc_spot_locked(&mut self, size: usize, align_pow2: usize, arch_mmu_flags: usize,
+        upper_limit: vaddr_t) -> vaddr_t {
         ZX_DEBUG_ASSERT!(size > 0 && IS_PAGE_ALIGNED!(size));
         dprintf!(INFO, "aspace size 0x{:x} align {} upper_limit 0x{:x}\n",
                  size, align_pow2, upper_limit);
 
         let align_pow2 = max(align_pow2, PAGE_SHIFT);
+        let alloc_spot = self.get_alloc_spot(align_pow2, size,
+            self.base, self.size, upper_limit);
+        /* Sanity check that the allocation fits. */
+        let (_, overflowed) = alloc_spot.overflowing_add(size - 1);
+        ZX_DEBUG_ASSERT!(!overflowed);
+        return alloc_spot;
+    }
+
+    /* Get the allocation spot that is free and large enough for the aligned size. */
+    fn get_alloc_spot(&mut self, align_pow2: usize, size: usize,
+        parent_base: vaddr_t, parent_size: usize, upper_limit: vaddr_t) -> vaddr_t {
+        let (alloc_spot, found) =
+            self.find_alloc_spot_in_gaps(size, align_pow2, parent_base, parent_size, upper_limit);
+        ZX_DEBUG_ASSERT!(found);
+
         let align: vaddr_t = 1 << align_pow2;
+        ZX_DEBUG_ASSERT!(IS_ALIGNED!(alloc_spot, align));
+        return alloc_spot;
+    }
 
-        /*
-  zx_status_t status = subregions_.GetAllocSpot(&alloc_spot, align_pow2, entropy, size, base_,
-                                                size_, prng, upper_limit);
-  if (status != ZX_OK) {
-    return status;
-  }
+    /* Try to find the spot among all the gaps. */
+    fn find_alloc_spot_in_gaps(&mut self, size: usize, align_pow2: usize,
+        parent_base: vaddr_t, parent_size: vaddr_t, upper_limit: vaddr_t) -> (vaddr_t, bool) {
+        let align = 1 << align_pow2;
+        /* Found indicates whether we have found the spot with index |selected_indexes|. */
+        let mut found = false;
+        /* alloc_spot is the virtual start address of the spot to allocate if we find one. */
+        let mut alloc_spot: vaddr_t = 0;
+        let func = |gap_base: vaddr_t, gap_len: usize| {
+            ZX_DEBUG_ASSERT!(IS_ALIGNED!(gap_base, align));
+            if gap_len < size || gap_base + size > upper_limit {
+                /* Ignore gap that is too small or out of range. */
+                return true;
+            }
+            found = true;
+            alloc_spot = gap_base;
+            return false;
+        };
 
-  // Sanity check that the allocation fits.
-  vaddr_t alloc_last_byte;
-  bool overflowed = add_overflow(alloc_spot, size - 1, &alloc_last_byte);
-  ASSERT(!overflowed);
-  auto after_iter = subregions_.UpperBound(alloc_last_byte);
-  auto before_iter = after_iter;
+        self.for_each_gap(func, align_pow2, parent_base, parent_size);
 
-  if (after_iter == subregions_.begin() || subregions_.IsEmpty()) {
-    before_iter = subregions_.end();
-  } else {
-    --before_iter;
-  }
+        (alloc_spot, found)
+    }
 
-  ASSERT(before_iter == subregions_.end() || before_iter.IsValid());
-  VmAddressRegionOrMapping* before = nullptr;
-  if (before_iter.IsValid()) {
-    before = &(*before_iter);
-  }
-  VmAddressRegionOrMapping* after = nullptr;
-  if (after_iter.IsValid()) {
-    after = &(*after_iter);
-  }
-  if (auto va = CheckGapLocked(before, after, alloc_spot, align, size, 0, arch_mmu_flags)) {
-    *spot = *va;
-    return ZX_OK;
-  }
-  panic("Unexpected allocation failure\n");
-  */
+    /* Utility for allocators for iterating over gaps between allocations.
+     * F should have a signature of bool func(vaddr_t gap_base, size_t gap_size).
+     * If func returns false, the iteration stops.
+     * And gap_base will be aligned in accordance with align_pow2. */
+    fn for_each_gap<F>(&mut self, mut func: F, align_pow2: usize, parent_base: vaddr_t, parent_size: usize)
+    where F: FnMut(usize, usize) -> bool {
+        let align = 1 << align_pow2;
 
-        return 0;
+        /* Scan the regions list to find the gap to the left of each region.
+         * We round up the end of the previous region to the requested alignment,
+         * so all gaps reported will be for aligned ranges. */
+        let mut prev_region_end = ROUNDUP!(parent_base, align);
+        for child in &self.children {
+            if child.base > prev_region_end {
+                let gap = child.base - prev_region_end;
+                if !func(prev_region_end, gap) {
+                    return;
+                }
+            }
+            let (end, ret) = child.base.overflowing_add(child.size);
+            if ret {
+                /* This region is already the last region. */
+                return;
+            }
+            prev_region_end = ROUNDUP!(end, align);
+        }
+
+        /* Grab the gap to the right of the last region. Note that if there are
+         * no regions, this handles reporting the VMAR's whole span as a gap. */
+         if parent_size > prev_region_end - parent_base {
+            /* This is equal to parent_base + parent_size - prev_region_end,
+             * but guarantee no overflow. */
+            let gap = parent_size - (prev_region_end - parent_base);
+            func(prev_region_end, gap);
+        }
     }
 
 }
@@ -304,36 +344,22 @@ fn vm_init_preheap_vmars() {
 
     /* Reserve the range for the heap. */
     let heap_bytes = ROUNDUP!(HEAP_MAX_SIZE_MB * MB, 1 << ARCH_HEAP_ALIGN_BITS);
-
-    /*
-    vaddr_t kernel_heap_base = 0;
-    {
-      Guard<CriticalMutex> guard(root_vmar->lock());
-      zx_status_t status = root_vmar->AllocSpotLocked(
-          heap_bytes, ARCH_HEAP_ALIGN_BITS, ARCH_MMU_FLAG_PERM_READ | ARCH_MMU_FLAG_PERM_WRITE,
-          &kernel_heap_base);
-      ASSERT_MSG(status == ZX_OK, "Failed to allocate VMAR for heap");
-    }
-    */
+    let kernel_heap_base =
+        root_vmar.alloc_spot_locked(heap_bytes, ARCH_HEAP_ALIGN_BITS,
+            ARCH_MMU_FLAG_PERM_READ | ARCH_MMU_FLAG_PERM_WRITE,
+            usize::MAX);
 
     /*
      * The heap has nothing to initialize later and we can create this
      * from the beginning with only read and write and no execute.
      */
-    /*
-    vmar = fbl::AdoptRef<VmAddressRegion>(&kernel_heap_vmar.Initialize(
-        *root_vmar, kernel_heap_base, heap_bytes,
-        VMAR_FLAG_CAN_MAP_SPECIFIC | VMAR_FLAG_CAN_MAP_READ | VMAR_FLAG_CAN_MAP_WRITE,
-        "kernel heap"));
-    {
-      Guard<CriticalMutex> guard(kernel_heap_vmar->lock());
-      kernel_heap_vmar->Activate();
-    }
+    let mut kernel_heap_vmar= VmAddressRegion::new();
+    kernel_heap_vmar.init(kernel_heap_base, heap_bytes,
+        VMAR_FLAG_CAN_MAP_SPECIFIC | VMAR_FLAG_CAN_MAP_READ | VMAR_FLAG_CAN_MAP_WRITE);
+
     dprintf!(INFO, "VM: kernel heap placed in range [{:x}, {:x})\n",
              kernel_heap_vmar.base, kernel_heap_vmar.base + kernel_heap_vmar.size);
-    */
-
-    ZX_DEBUG_ASSERT!(root_vmar.children.len() == 2);
+    root_vmar.insert_child(kernel_heap_vmar);
 }
 
 fn kernel_aspace_init_preheap() -> Result<(), ErrNO> {
