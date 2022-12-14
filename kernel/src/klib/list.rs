@@ -49,6 +49,64 @@ impl ListNode {
     }
 }
 
+pub struct Iter<'a, T: Linked<T> + 'a> {
+    ref_node: Option<NonNull<ListNode>>,    /* ref to node */
+    len: usize,
+    marker: PhantomData<&'a NonNull<T>>,
+}
+
+impl<'a, T: Linked<T>> Iterator for Iter<'a, T> {
+    type Item = &'a T;
+
+    #[inline]
+    fn next(&mut self) -> Option<&'a T> {
+        if self.len == 0 {
+            None
+        } else {
+            if let Some(node) = self.ref_node {
+                unsafe {
+                    self.len -= 1;
+                    self.ref_node = (*node.as_ptr()).next;
+                    T::from_node(node).map(|ptr| {
+                        &(*ptr.as_ptr())
+                    })
+                }
+            } else {
+                None
+            }
+        }
+    }
+}
+
+pub struct IterMut<'a, T: Linked<T> + 'a> {
+    ref_node: Option<NonNull<ListNode>>,    /* ref to node */
+    len: usize,
+    marker: PhantomData<&'a NonNull<T>>,
+}
+
+impl<'a, T: Linked<T>> Iterator for IterMut<'a, T> {
+    type Item = &'a mut T;
+
+    #[inline]
+    fn next(&mut self) -> Option<&'a mut T> {
+        if self.len == 0 {
+            None
+        } else {
+            if let Some(node) = self.ref_node {
+                unsafe {
+                    self.len -= 1;
+                    self.ref_node = (*node.as_ptr()).next;
+                    T::from_node(node).map(|ptr| {
+                        &mut (*ptr.as_ptr())
+                    })
+                }
+            } else {
+                None
+            }
+        }
+    }
+}
+
 pub struct List<T: Linked<T>> {
     node: ListNode,
     ref_node: Option<NonNull<ListNode>>,    /* ref to node */
@@ -73,6 +131,14 @@ impl<T: Linked<T>> List<T> {
         list.node.prev = list.ref_node;
 
         list
+    }
+
+    pub fn iter(&self) -> Iter<T> {
+        Iter { ref_node: self.ref_node, len: self.len, marker: PhantomData }
+    }
+
+    pub fn iter_mut(&mut self) -> IterMut<'_, T> {
+        IterMut { ref_node: self.ref_node, len: self.len, marker: PhantomData }
     }
 
     pub fn empty(&self) -> bool {

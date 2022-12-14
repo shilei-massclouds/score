@@ -280,7 +280,7 @@ impl PmmNode {
                  self.free_count.load(Ordering::Relaxed));
     }
 
-    fn alloc_range(&mut self, address: paddr_t, count: usize, mut list: List<vm_page_t>)
+    fn alloc_range(&mut self, address: paddr_t, count: usize, list: &mut List<vm_page_t>)
         -> Result<(), ErrNO> {
         dprintf!(INFO, "address {:x}, count {:x}\n", address, count);
 
@@ -342,7 +342,7 @@ impl PmmNode {
         Ok(())
     }
 
-    fn free_list_locked(&self, list: List<vm_page_t>) {
+    fn free_list_locked(&self, list: &mut List<vm_page_t>) {
         todo!("Implement [free_list_locked]");
     }
 
@@ -375,7 +375,7 @@ impl PmmNode {
 
 }
 
-pub fn pmm_alloc_range(address: paddr_t, count: usize, mut list: List<vm_page_t>) {
+pub fn pmm_alloc_range(address: paddr_t, count: usize, list: &mut List<vm_page_t>) {
     PMM_NODE.lock().alloc_range(address, count, list);
 }
 

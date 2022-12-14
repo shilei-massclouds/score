@@ -10,6 +10,9 @@ use spin::lazy::Lazy;
 use crate::types::*;
 use crate::defines::*;
 use crate::debug::*;
+use crate::pmm::pmm_alloc_range;
+use crate::klib::list::List;
+use crate::vm_page_state;
 
 pub const ARCH_MMU_FLAG_PERM_USER:      usize = 1 << 2;
 pub const ARCH_MMU_FLAG_PERM_READ:      usize = 1 << 3;
@@ -69,17 +72,12 @@ pub fn mark_pages_in_use(pa: paddr_t, len: usize) {
 
     dprintf!(INFO, "aligned pa {:x}, len {:x}\n", pa, len);
 
-    /*
-  list_node list = LIST_INITIAL_VALUE(list);
+    let mut list = List::new();
+    pmm_alloc_range(pa, len / PAGE_SIZE, &mut list);
 
-  zx_status_t status = pmm_alloc_range(pa, len / PAGE_SIZE, &list);
-  ASSERT_MSG(status == ZX_OK, "failed to reserve memory range [%#" PRIxPTR ", %#" PRIxPTR "]\n", pa,
-             pa + len - 1);
-
-  // mark all of the pages we allocated as WIRED
-  vm_page_t* p;
-  list_for_every_entry (&list, p, vm_page_t, queue_node) {
-    p->set_state(vm_page_state::WIRED);
-  }
-  */
+    /* mark all of the pages we allocated as WIRED */
+    for page in list.iter_mut() {
+        page.set_state(vm_page_state::WIRED);
+    }
+    panic!("Iterator!");
 }
