@@ -153,6 +153,7 @@ impl PmmArena {
         /* add all pages that aren't part of the page array
          * to the free list pages */
         let mut list = List::new();
+        list.init();
 
         let mut i = 0;
         while i < page_count {
@@ -227,7 +228,9 @@ impl PmmNode {
     }
 
     pub fn init(&mut self) {
-        self.free_list = Some(List::<vm_page_t>::new());
+        let mut list = List::<vm_page_t>::new();
+        list.init();
+        self.free_list = Some(list);
     }
 
     /* during early boot before threading exists. */
@@ -268,7 +271,7 @@ impl PmmNode {
         self.free_count.fetch_add(list.len() as u64, Ordering::Relaxed);
         match &mut self.free_list {
             Some(free_list) => {
-                free_list.append(list);
+                free_list.splice(list);
             },
             None => {
                 panic!("free_list is None");
@@ -342,6 +345,21 @@ impl PmmNode {
         Ok(())
     }
 
+    fn alloc_page(&mut self, flags: usize) -> Option<NonNull<vm_page_t>> {
+        if let Some(list) = &mut self.free_list {
+            let page = list.pop_head();
+            if let Some(p) = page {
+                unsafe {
+                    ZX_DEBUG_ASSERT!(!p.as_ref().is_loaned());
+                    self.alloc_page_helper_locked(p);
+                }
+                self.decrement_free_count_locked(1);
+            }
+            return page;
+        }
+        return None;
+    }
+
     fn free_list_locked(&self, list: &mut List<vm_page_t>) {
         todo!("Implement [free_list_locked]");
     }
@@ -377,6 +395,10 @@ impl PmmNode {
 
 pub fn pmm_alloc_range(address: paddr_t, count: usize, list: &mut List<vm_page_t>) {
     PMM_NODE.lock().alloc_range(address, count, list);
+}
+
+pub fn pmm_alloc_page(flags: usize) -> Option<NonNull<vm_page_t>> {
+    PMM_NODE.lock().alloc_page(flags)
 }
 
 pub fn pmm_add_arena(info: ArenaInfo) -> Result<(), ErrNO> {

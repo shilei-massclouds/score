@@ -15,6 +15,9 @@ use crate::vm::*;
 use crate::{KERNEL_ASPACE_BASE, KERNEL_ASPACE_SIZE};
 use crate::{ErrNO, types::vaddr_t, ZX_DEBUG_ASSERT};
 use crate::allocator::boot_heap_mark_pages_in_use;
+use crate::pmm::pmm_alloc_page;
+use crate::vm_page_state::{self, vm_page_state_t};
+use crate::arch::mmu::arch_zero_page;
 
 /* Allow VmMappings to be created inside the new region with the SPECIFIC
  * or OFFSET_IS_UPPER_LIMIT flag. */
@@ -279,23 +282,22 @@ pub fn vm_init_preheap() -> Result<(), ErrNO> {
     /* mark the physical pages used by the boot time allocator */
     boot_heap_mark_pages_in_use();
 
-    /*
-  zx_status_t status;
+    // grab a page and mark it as the zero page
+    let zero_page = pmm_alloc_page(0);
+    if let Some(mut page) = zero_page {
+        /* consider the zero page a wired page part of the kernel. */
+        unsafe {
+            page.as_mut().set_state(vm_page_state::WIRED);
+            let va = paddr_to_physmap(page.as_ref().paddr());
+            ZX_DEBUG_ASSERT!(va != 0);
+            arch_zero_page(va);
+        }
+    } else {
+        panic!("alloc zero page error!");
+    }
 
-  // grab a page and mark it as the zero page
-  status = pmm_alloc_page(0, &zero_page, &zero_page_paddr);
-  DEBUG_ASSERT(status == ZX_OK);
-
-  // consider the zero page a wired page part of the kernel.
-  zero_page->set_state(vm_page_state::WIRED);
-
-  void* ptr = paddr_to_physmap(zero_page_paddr);
-  DEBUG_ASSERT(ptr);
-
-  arch_zero_page(ptr);
-
-  AnonymousPageRequester::Init();
-  */
+    /* AnonymousPageRequester::Init(); */
+    dprintf!(INFO, "prevm\n");
     Ok(())
 }
 

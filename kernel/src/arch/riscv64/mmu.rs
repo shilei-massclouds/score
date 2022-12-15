@@ -8,6 +8,7 @@
 
 use core::cmp::min;
 use core::ptr::null_mut;
+use core::arch::asm;
 use crate::types::*;
 use crate::defines::*;
 use crate::errors::ErrNO;
@@ -252,4 +253,28 @@ fn _boot_map<F1, F2>(table: &mut PageTable, level: usize,
     }
 
     Ok(())
+}
+
+pub unsafe fn arch_zero_page(va: vaddr_t) {
+    use crate::*;
+    use crate::debug::*;
+    dprintf!(INFO, "step {:x}\n", va);
+    panic!("Handle pmp");
+    let va1: u64 = 0xffff00008007fff0;
+    let ptr = va1 as *mut usize;
+    *ptr = 0;
+    dprintf!(INFO, "step {:x}\n", va);
+    //asm!(
+    //    /* Clear BSS for flat non-ELF images */
+    //    "ble a1, a0, 2f
+    //    1:
+    //     sd zero, (a0)
+    //     add a0, a0, 8
+    //     blt a0, a1, 1b
+    //    2:",
+
+    //    in("a0") va,
+    //    in("a1") (va + PAGE_SIZE),
+    //    options(noreturn)
+    //);
 }

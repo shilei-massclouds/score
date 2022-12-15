@@ -161,6 +161,21 @@ impl<T: Linked<T>> List<T> {
         }
     }
 
+    pub fn pop_head(&mut self) -> Option<NonNull<T>> {
+        if self.node.next == self.ref_node {
+            return None;
+        }
+
+        let mut head = self.head();
+        if let Some(mut node) = head {
+            unsafe {
+                node.as_mut().delete_from_list();
+            }
+        }
+
+        head
+    }
+
     /* Adds the given node to the head of the list. */
     #[inline]
     fn add_head_node(&mut self, node: &mut ListNode) {
@@ -195,7 +210,7 @@ impl<T: Linked<T>> List<T> {
         unsafe { self.add_tail_node(elt.as_mut().into_node()); }
     }
 
-    pub fn append(&mut self, other: &mut Self) {
+    pub fn splice(&mut self, other: &mut Self) {
         if other.node.prev == other.ref_node {
             return;
         }
@@ -207,6 +222,9 @@ impl<T: Linked<T>> List<T> {
             unsafe {(*prev.as_ptr()).next = self.ref_node;}
         }
 
+        if self.node.next == self.ref_node {
+            self.node.next = other.node.next;
+        }
         if let Some(prev) = self.node.prev {
             unsafe {(*prev.as_ptr()).next = other.node.next.take();}
         }

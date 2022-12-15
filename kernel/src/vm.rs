@@ -73,6 +73,7 @@ pub fn mark_pages_in_use(pa: paddr_t, len: usize) {
     dprintf!(INFO, "aligned pa {:x}, len {:x}\n", pa, len);
 
     let mut list = List::new();
+    list.init();
     pmm_alloc_range(pa, len / PAGE_SIZE, &mut list);
 
     /* mark all of the pages we allocated as WIRED */
