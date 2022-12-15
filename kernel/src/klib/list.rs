@@ -24,6 +24,7 @@ pub trait Linked<T> {
     }
 }
 
+#[repr(C)]
 pub struct ListNode {
     next: Option<NonNull<ListNode>>,
     prev: Option<NonNull<ListNode>>,
@@ -107,6 +108,7 @@ impl<'a, T: Linked<T>> Iterator for IterMut<'a, T> {
     }
 }
 
+#[repr(C)]
 pub struct List<T: Linked<T>> {
     node: ListNode,
     ref_node: Option<NonNull<ListNode>>,    /* ref to node */
@@ -119,26 +121,28 @@ impl<T: Linked<T>> List<T> {
     #[inline]
     #[must_use]
     pub fn new() -> Self {
-        let mut list = List {
+        Self {
             node: ListNode::new(),
             ref_node: None,
             len: 0,
             marker: PhantomData
-        };
+        }
+    }
 
-        list.ref_node = NonNull::new(&mut list.node);
-        list.node.next = list.ref_node;
-        list.node.prev = list.ref_node;
-
-        list
+    #[inline]
+    #[must_use]
+    pub fn init(&mut self) {
+        self.ref_node = NonNull::new(&mut self.node);
+        self.node.next = self.ref_node;
+        self.node.prev = self.ref_node;
     }
 
     pub fn iter(&self) -> Iter<T> {
-        Iter { ref_node: self.ref_node, len: self.len, marker: PhantomData }
+        Iter { ref_node: self.node.next, len: self.len, marker: PhantomData }
     }
 
     pub fn iter_mut(&mut self) -> IterMut<'_, T> {
-        IterMut { ref_node: self.ref_node, len: self.len, marker: PhantomData }
+        IterMut { ref_node: self.node.next, len: self.len, marker: PhantomData }
     }
 
     pub fn empty(&self) -> bool {
@@ -147,6 +151,14 @@ impl<T: Linked<T>> List<T> {
 
     pub fn add_head(&mut self, mut elt: NonNull<T>) {
         unsafe { self.add_head_node(elt.as_mut().into_node()); }
+    }
+
+    pub fn head(&self) -> Option<NonNull<T>> {
+        if let Some(next) = self.node.next {
+            T::from_node(next)
+        } else {
+            None
+        }
     }
 
     /* Adds the given node to the head of the list. */

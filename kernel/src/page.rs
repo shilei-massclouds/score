@@ -17,6 +17,7 @@ const kLoanedStateIsLoaned: u8 = 1;
 const kLoanedStateIsLoanCancelled: u8 = 2;
 
 #[allow(non_camel_case_types)]
+#[repr(C)]
 pub struct vm_page {
     /* linked node */
     pub queue_node: ListNode,
@@ -42,7 +43,7 @@ impl Linked<vm_page> for vm_page {
 }
 
 impl vm_page {
-    pub const fn _new() -> Self {
+    pub const fn new() -> Self {
         Self {
             queue_node: ListNode::new(),
             paddr: 0,

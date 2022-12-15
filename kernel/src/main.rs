@@ -21,6 +21,9 @@ use crate::defines::*;
 use crate::platform::platform_early_init;
 use crate::pmm::PMM_NODE;
 use crate::aspace::vm_init_preheap;
+use crate::page::vm_page;
+use crate::klib::list::List;
+use core::ptr::NonNull;
 
 global_asm!(include_str!("arch/riscv64/start.S"));
 
@@ -135,9 +138,31 @@ fn _lk_main() -> Result<(), ErrNO> {
     ///////////////////////////
 
     println!("lk_main ...");
-    let s = String::from("Test");
-    println!("string: {}", s);
-    println!("Hello, {}! [{}]", "world", 9);
+    /*
+    let mut list = List::<vm_page>::new();
+    list.init();
+    let mut page = vm_page::new();
+    page.init(0x1000);
+        dprintf!(INFO, "len {:x}\n", list.len());
+    list.add_tail((&mut page).into());
+        dprintf!(INFO, "len {:x}\n", list.len());
+    let mut page = vm_page::new();
+    page.init(0x2000);
+    list.add_tail((&mut page).into());
+    let mut page = vm_page::new();
+    page.init(0x3000);
+    list.add_head((&mut page).into());
+    if let Some(head) = list.head() {
+        unsafe {
+        dprintf!(INFO, "head {:?} {:x}\n", head, head.as_ref().paddr());
+        }
+    }
+
+    for page in list.iter() {
+    //for page in list.iter_mut() {
+        dprintf!(INFO, "page pa {:x}\n", page.paddr());
+    }
+    */
 
     Ok(())
 }
