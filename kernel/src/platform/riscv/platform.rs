@@ -15,10 +15,16 @@ use crate::defines::*;
 use crate::errors::ErrNO;
 use crate::platform::boot_reserve::boot_reserve_init;
 use crate::pmm::{MAX_ARENAS, ArenaInfo};
-use device_tree::DeviceTree;
+use device_tree::{DeviceTree, Node};
 use crate::platform::periphmap::add_periph_range;
-use crate::platform::boot_reserve::boot_reserve_add_range;
+use crate::platform::boot_reserve::{boot_reserve_add_range, RESERVE_RANGES};
 use crate::pmm::pmm_add_arena;
+use crate::page::vm_page_t;
+use crate::{ROUNDUP_PAGE_SIZE, ROUNDUP};
+use crate::List;
+use crate::pmm::pmm_alloc_range;
+use spin::Mutex;
+use crate::vm_page_state::{self, vm_page_state_t};
 
 pub mod boot_reserve;
 mod periphmap;
@@ -28,7 +34,7 @@ pub const MAX_ZBI_MEM_RANGES: usize = 32;
 pub enum ZBIMemRangeType {
     RAM,
     PERIPHERAL,
-    _RESERVED,
+    RESERVED,
 }
 
 pub struct ZBIMemRange {
@@ -130,7 +136,31 @@ fn dlog_bypass_init() {
 fn pmm_checker_init_from_cmdline() {
 }
 
+pub static RESERVED_PAGE_LIST: Mutex<List<vm_page_t>> =
+    Mutex::new(List::<vm_page_t>::new());
+
 fn boot_reserve_wire() -> Result<(), ErrNO> {
+    let mut total_list = List::new();
+    total_list.init();
+    {
+        let res = RESERVE_RANGES.lock();
+        for r in res.iter() {
+            dprintf!(INFO, "PMM: boot reserve marking WIRED [{:x}, {:x}]\n",
+                     r.pa, r.pa + r.len -1);
+            let mut alloc_page_list = List::new();
+            alloc_page_list.init();
+            let pages = ROUNDUP_PAGE_SIZE!(r.len) / PAGE_SIZE;
+            pmm_alloc_range(r.pa, pages, &mut alloc_page_list);
+            total_list.splice(&mut alloc_page_list);
+        }
+    }
+
+    /* mark all of the pages we allocated as WIRED */
+    for page in &mut total_list.iter_mut() {
+        page.set_state(vm_page_state::WIRED);
+    }
+
+    RESERVED_PAGE_LIST.lock().splice(&mut total_list);
     Ok(())
 }
 
@@ -181,9 +211,10 @@ fn process_mem_ranges(mem_config: Vec<ZBIMemRange>)
                          range.paddr, range.length);
                 add_periph_range(range.paddr, range.length)?;
             },
-            ZBIMemRangeType::_RESERVED => {
-                dprintf!(WARN, "FIND RESERVED Memory Range {:x} {:x}!\n",
+            ZBIMemRangeType::RESERVED => {
+                dprintf!(INFO, "FIND RESERVED Memory Range {:x} {:x}!\n",
                          range.paddr, range.length);
+                boot_reserve_add_range(range.paddr, range.length);
             }
         }
     }
@@ -315,6 +346,10 @@ fn early_init_dt_scan_memory(dt: &DeviceTree, addr_cells: u32, size_cells: u32)
 
     let mut mem_config = Vec::<ZBIMemRange>::with_capacity(MAX_ZBI_MEM_RANGES);
 
+    let mut cb = |base, size| {
+        add_memory_arch(&mut mem_config, base, size);
+    };
+
     for child in &root.children {
         /* We are scanning "memory" nodes only */
         if let Ok(t) = child.prop_str("device_type") {
@@ -325,36 +360,64 @@ fn early_init_dt_scan_memory(dt: &DeviceTree, addr_cells: u32, size_cells: u32)
             continue;
         }
 
-        let mut pos = 0;
-        let reg_len = child.prop_len("reg");
-        while pos < reg_len {
-            let base = if addr_cells == 2 {
-                child.prop_u64_at("reg", pos).unwrap() as usize
-            } else {
-                child.prop_u32_at("reg", pos).unwrap() as usize
-            };
-            pos += (addr_cells << 2) as usize;
-
-            let size = if size_cells == 2 {
-                child.prop_u64_at("reg", pos).unwrap() as usize
-            } else {
-                child.prop_u32_at("reg", pos).unwrap() as usize
-            };
-            pos += (size_cells << 2) as usize;
-
-            if size == 0 {
-                continue;
-            }
-            dprintf!(INFO, " - 0x{:x}, 0x{:x}\n", base, size);
-
-            early_init_dt_add_memory_arch(&mut mem_config, base, size);
-        }
+        parse_reg(child, addr_cells, size_cells, &mut cb);
     }
 
+    early_scan_reserved_mem(dt, &mut mem_config, addr_cells, size_cells)?;
     Ok(mem_config)
 }
 
-fn early_init_dt_add_memory_arch(config: &mut ZBIMemRangeVec,
-                                 base: usize, size: usize) {
+fn parse_reg<F>(node: &Node, addr_cells: u32, size_cells: u32, mut cb: F)
+where
+    F: FnMut(usize, usize)
+{
+    let mut pos = 0;
+    let reg_len = node.prop_len("reg");
+    while pos < reg_len {
+        let base = if addr_cells == 2 {
+            node.prop_u64_at("reg", pos).unwrap() as usize
+        } else {
+            node.prop_u32_at("reg", pos).unwrap() as usize
+        };
+        pos += (addr_cells << 2) as usize;
+
+        let size = if size_cells == 2 {
+            node.prop_u64_at("reg", pos).unwrap() as usize
+        } else {
+            node.prop_u32_at("reg", pos).unwrap() as usize
+        };
+        pos += (size_cells << 2) as usize;
+
+        if size == 0 {
+            continue;
+        }
+        dprintf!(INFO, " - 0x{:x}, 0x{:x}\n", base, size);
+
+        cb(base, size);
+    }
+}
+
+fn early_scan_reserved_mem(dt: &DeviceTree, config: &mut ZBIMemRangeVec,
+                           addr_cells: u32, size_cells: u32)
+    -> Result<(), ErrNO> {
+
+    let mut cb = |base, size| {
+        add_reserved_memory_arch(config, base, size);
+    };
+
+    let regions = dt.find("/reserved-memory").ok_or_else(|| ErrNO::BadDTB)?;
+    for region in &regions.children {
+        parse_reg(region, addr_cells, size_cells, &mut cb);
+    }
+
+    Ok(())
+}
+
+fn add_memory_arch(config: &mut ZBIMemRangeVec, base: usize, size: usize) {
     config.push(ZBIMemRange::new(ZBIMemRangeType::RAM, base, size));
+}
+
+fn add_reserved_memory_arch(config: &mut ZBIMemRangeVec,
+                            base: usize, size: usize) {
+    config.push(ZBIMemRange::new(ZBIMemRangeType::RESERVED, base, size));
 }

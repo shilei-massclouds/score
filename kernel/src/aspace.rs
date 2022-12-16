@@ -284,6 +284,7 @@ pub fn vm_init_preheap() -> Result<(), ErrNO> {
 
     // grab a page and mark it as the zero page
     let zero_page = pmm_alloc_page(0);
+    panic!("END!");
     if let Some(mut page) = zero_page {
         /* consider the zero page a wired page part of the kernel. */
         unsafe {

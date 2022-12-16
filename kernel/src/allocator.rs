@@ -99,9 +99,12 @@ pub fn boot_heap_earliest_init() {
 }
 
 pub fn boot_heap_mark_pages_in_use() {
+    /* boot heap area is included in kernel */
+    /*
     let allocator = ALLOCATOR.lock();
 
     let start = kernel_va_to_pa(allocator.start);
     let end = kernel_va_to_pa(allocator.next);
     mark_pages_in_use(start, end - start);
+    */
 }

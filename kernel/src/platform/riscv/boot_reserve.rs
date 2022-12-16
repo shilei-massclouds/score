@@ -22,7 +22,8 @@ pub struct BootReserveRange {
     pub len: usize,
 }
 
-static RESERVE_RANGES: Mutex<Vec<BootReserveRange>> = Mutex::new(Vec::new());
+pub static RESERVE_RANGES: Mutex<Vec<BootReserveRange>> =
+    Mutex::new(Vec::new());
 
 pub fn boot_reserve_init(pa: paddr_t, len: usize) -> Result<(), ErrNO> {
     /* add the kernel to the boot reserve list */

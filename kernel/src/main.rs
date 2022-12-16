@@ -24,6 +24,7 @@ use crate::aspace::vm_init_preheap;
 use crate::page::vm_page;
 use crate::klib::list::List;
 use core::ptr::NonNull;
+use crate::platform::RESERVED_PAGE_LIST;
 
 global_asm!(include_str!("arch/riscv64/start.S"));
 
@@ -181,6 +182,7 @@ fn dlog_init_early() {
 /* deal with any static constructors */
 fn call_constructors() {
     PMM_NODE.lock().init();
+    RESERVED_PAGE_LIST.lock().init();
 }
 
 fn arch_early_init() {

@@ -337,6 +337,7 @@ impl PmmNode {
         self.decrement_free_count_locked(allocated as u64);
 
         if allocated != count {
+            panic!("alloc_range: {}, {}", allocated, count);
             /* we were not able to allocate the entire run, free these pages */
             self.free_list_locked(list);
             return Err(ErrNO::NotFound);
@@ -350,6 +351,7 @@ impl PmmNode {
             let page = list.pop_head();
             if let Some(p) = page {
                 unsafe {
+                    dprintf!(INFO, "alloc page: pa {:x}\n", p.as_ref().paddr());
                     ZX_DEBUG_ASSERT!(!p.as_ref().is_loaned());
                     self.alloc_page_helper_locked(p);
                 }
@@ -365,7 +367,7 @@ impl PmmNode {
     }
 
     unsafe fn alloc_page_helper_locked(&self, mut page: NonNull<vm_page_t>) {
-        dprintf!(INFO, "allocating page pa {:x}, prev state {:x}\n",
+        dprintf!(SPEW, "allocating page pa {:x}, prev state {:x}\n",
                  page.as_ref().paddr(), page.as_ref().state());
 
         ZX_DEBUG_ASSERT!(page.as_ref().is_free());

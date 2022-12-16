@@ -15,7 +15,7 @@ pub const WARN      : u32 = 1;
 pub const INFO      : u32 = 2;
 pub const SPEW      : u32 = 3;
 
-pub const DEBUG_PRINT_LEVEL: u32 = SPEW;
+pub const DEBUG_PRINT_LEVEL: u32 = INFO;
 
 #[macro_export]
 macro_rules! dprintf {

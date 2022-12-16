@@ -120,7 +120,7 @@ impl<T: Linked<T>> List<T> {
     /* Creates an empty `LinkedList`. */
     #[inline]
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             node: ListNode::new(),
             ref_node: None,
