@@ -87,8 +87,6 @@ extern "C" {
 
 #[no_mangle]
 pub extern "C" fn setup_vm() {
-    STDOUT.lock().puts("step1\n");
-
     let mut used: usize = 0;
     let mut alloc = || {
         unsafe {
@@ -212,14 +210,11 @@ fn _boot_map<F1, F2>(table: &mut PageTable, level: usize,
             off += PAGE_SIZE;
             continue;
         }
-        STDOUT.lock().puts("step2\n");
         if !table.item_present(index) {
-            STDOUT.lock().puts("step2.0\n");
             if (level != 0) &&
                 aligned_in_level(vaddr+off, level) &&
                 aligned_in_level(paddr+off, level) &&
                 ((len - off) >= LEVEL_SIZE!(level)) {
-                STDOUT.lock().puts("step2.1\n");
                 /* set up a large leaf at this level */
                 table.mk_item(index,
                               LEVEL_PA_TO_PFN!(paddr + off, level),
@@ -228,17 +223,14 @@ fn _boot_map<F1, F2>(table: &mut PageTable, level: usize,
                 off += LEVEL_SIZE!(level);
                 continue;
             }
-            STDOUT.lock().puts("step2.2\n");
 
             let pa: usize = alloc() as usize;
             table.mk_item(index, PA_TO_PFN!(pa), PAGE_TABLE);
         }
-        STDOUT.lock().puts("step3.1\n");
         if table.item_leaf(index) {
             /* not legal as a leaf at this level */
             return Err(ErrNO::BadState);
         }
-        STDOUT.lock().puts("step4\n");
 
         let lower_table_ptr = phys_to_virt(table.item_descend(index));
         let lower_len = min(LEVEL_SIZE!(level), len-off);
@@ -249,32 +241,21 @@ fn _boot_map<F1, F2>(table: &mut PageTable, level: usize,
         }
 
         off += LEVEL_SIZE!(level);
-        STDOUT.lock().puts("step5\n");
     }
 
     Ok(())
 }
 
 pub unsafe fn arch_zero_page(va: vaddr_t) {
-    use crate::*;
-    use crate::debug::*;
-    dprintf!(INFO, "step {:x}\n", va);
-    panic!("Handle pmp");
-    let va1: u64 = 0xffff00008007fff0;
-    let ptr = va1 as *mut usize;
-    *ptr = 0;
-    dprintf!(INFO, "step {:x}\n", va);
-    //asm!(
-    //    /* Clear BSS for flat non-ELF images */
-    //    "ble a1, a0, 2f
-    //    1:
-    //     sd zero, (a0)
-    //     add a0, a0, 8
-    //     blt a0, a1, 1b
-    //    2:",
+    asm!(
+        "ble {1}, {0}, 2f
+        1:
+         sd zero, ({0})
+         add {0}, {0}, 8
+         blt {0}, {1}, 1b
+        2:",
 
-    //    in("a0") va,
-    //    in("a1") (va + PAGE_SIZE),
-    //    options(noreturn)
-    //);
+        in(reg) va,
+        in(reg) (va + PAGE_SIZE),
+    );
 }

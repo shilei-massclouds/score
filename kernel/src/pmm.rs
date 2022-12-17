@@ -212,7 +212,7 @@ pub struct PmmNode {
 
     /* Free pages where !loaned. */
     free_count  : AtomicU64,
-    free_list   : Option<List<vm_page_t>>,
+    free_list   : List<vm_page_t>,
 }
 
 impl PmmNode {
@@ -223,14 +223,12 @@ impl PmmNode {
             arena_cumulative_size: 0,
 
             free_count  : AtomicU64::new(0),
-            free_list   : None,
+            free_list   : List::<vm_page_t>::new(),
         }
     }
 
     pub fn init(&mut self) {
-        let mut list = List::<vm_page_t>::new();
-        list.init();
-        self.free_list = Some(list);
+        self.free_list.init();
     }
 
     /* during early boot before threading exists. */
@@ -269,25 +267,20 @@ impl PmmNode {
 
     pub fn add_free_pages(&mut self, list: &mut List<vm_page_t>) {
         self.free_count.fetch_add(list.len() as u64, Ordering::Relaxed);
-        match &mut self.free_list {
-            Some(free_list) => {
-                free_list.splice(list);
-            },
-            None => {
-                panic!("free_list is None");
-            }
-        }
+        self.free_list.splice(list);
         // free_pages_evt_.Signal();
 
         dprintf!(INFO, "free count now {}\n",
                  self.free_count.load(Ordering::Relaxed));
     }
 
-    fn alloc_range(&mut self, address: paddr_t, count: usize, list: &mut List<vm_page_t>)
-        -> Result<(), ErrNO> {
+    fn alloc_range(&mut self, address: paddr_t, count: usize,
+                   list: &mut List<vm_page_t>) -> Result<(), ErrNO> {
         dprintf!(INFO, "address {:x}, count {:x}\n", address, count);
 
-        /* ZX_DEBUG_ASSERT!(Thread::Current::memory_allocation_state().IsEnabled()); */
+        /* ZX_DEBUG_ASSERT!(
+         * Thread::Current::memory_allocation_state().IsEnabled()); */
+
         ZX_DEBUG_ASSERT!(list.empty());
         if count == 0 {
             return Ok(());
@@ -296,7 +289,8 @@ impl PmmNode {
         let mut address = ROUNDDOWN!(address, PAGE_SIZE);
 
         let mut allocated: usize = 0;
-        /* walk through the arenas, looking to see if the physical page belongs to it */
+        /* walk through the arenas, looking to see
+         * if the physical page belongs to it */
         for area in &self.arenas {
             while allocated < count && area.address_in_arena(address) {
                 let mut page: NonNull<vm_page_t>;
@@ -315,7 +309,7 @@ impl PmmNode {
                     if !page.as_ref().is_free() {
                         break;
                     }
-                    /* We never allocate loaned pages for caller of AllocRange() */
+                    /* never allocate loaned pages for caller of AllocRange() */
                     if page.as_ref().is_loaned() {
                         break;
                     }
@@ -347,19 +341,16 @@ impl PmmNode {
     }
 
     fn alloc_page(&mut self, flags: usize) -> Option<NonNull<vm_page_t>> {
-        if let Some(list) = &mut self.free_list {
-            let page = list.pop_head();
-            if let Some(p) = page {
-                unsafe {
-                    dprintf!(INFO, "alloc page: pa {:x}\n", p.as_ref().paddr());
-                    ZX_DEBUG_ASSERT!(!p.as_ref().is_loaned());
-                    self.alloc_page_helper_locked(p);
-                }
-                self.decrement_free_count_locked(1);
+        let page = self.free_list.pop_head();
+        if let Some(p) = page {
+            unsafe {
+                dprintf!(INFO, "alloc page: pa {:x}\n", p.as_ref().paddr());
+                ZX_DEBUG_ASSERT!(!p.as_ref().is_loaned());
+                self.alloc_page_helper_locked(p);
             }
-            return page;
+            self.decrement_free_count_locked(1);
         }
-        return None;
+        return page;
     }
 
     fn free_list_locked(&self, list: &mut List<vm_page_t>) {
@@ -373,17 +364,20 @@ impl PmmNode {
         ZX_DEBUG_ASSERT!(page.as_ref().is_free());
 
         if page.as_ref().is_loaned() {
-            /* We want the set_stack_owner() to be visible before set_state(), but we don't need to make
-             * set_state() a release just for the benefit of loaned pages, so we use this fence. */
+            /* We want the set_stack_owner() to be visible before set_state(),
+             * but we don't need to make set_state() a release just for
+             * the benefit of loaned pages, so we use this fence. */
             //ktl::atomic_thread_fence(ktl::memory_order_release);
             todo!("Fence!");
         }
 
         /*
-         * Here we transition the page from FREE->ALLOC, completing the transfer of ownership
-         * from the PmmNode to the stack. This must be done under lock_, and more specifically
-         * the same lock_ acquisition that removes the page from the free list, as both being
-         * the free list, or being in the ALLOC state, indicate ownership by the PmmNode.
+         * Here we transition the page from FREE->ALLOC,
+         * completing the transfer of ownership from the PmmNode to the stack.
+         * This must be done under lock_, and more specifically
+         * the same lock_ acquisition that removes the page from the free list,
+         * as both being the free list, or being in the ALLOC state,
+         * indicate ownership by the PmmNode.
          */
         page.as_mut().set_state(vm_page_state::ALLOC);
     }

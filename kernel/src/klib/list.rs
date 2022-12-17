@@ -41,10 +41,10 @@ impl ListNode {
         }
 
         if let Some(next) = self.next {
-            unsafe {(*next.as_ptr()).prev = self.prev.take();}
+            unsafe {(*next.as_ptr()).prev = self.prev;}
         }
 
-        if let Some(prev) = self.prev {
+        if let Some(prev) = self.prev.take() {
             unsafe {(*prev.as_ptr()).next = self.next.take();}
         }
     }
