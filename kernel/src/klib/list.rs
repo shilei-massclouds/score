@@ -52,7 +52,7 @@ impl ListNode {
 
 pub struct Iter<'a, T: Linked<T> + 'a> {
     ref_node: Option<NonNull<ListNode>>,    /* ref to node */
-    len: usize,
+    head: Option<NonNull<ListNode>>,   /* head of list */
     marker: PhantomData<&'a NonNull<T>>,
 }
 
@@ -61,12 +61,11 @@ impl<'a, T: Linked<T>> Iterator for Iter<'a, T> {
 
     #[inline]
     fn next(&mut self) -> Option<&'a T> {
-        if self.len == 0 {
+        if self.ref_node == self.head {
             None
         } else {
             if let Some(node) = self.ref_node {
                 unsafe {
-                    self.len -= 1;
                     self.ref_node = (*node.as_ptr()).next;
                     T::from_node(node).map(|ptr| {
                         &(*ptr.as_ptr())
@@ -81,7 +80,7 @@ impl<'a, T: Linked<T>> Iterator for Iter<'a, T> {
 
 pub struct IterMut<'a, T: Linked<T> + 'a> {
     ref_node: Option<NonNull<ListNode>>,    /* ref to node */
-    len: usize,
+    head: Option<NonNull<ListNode>>,   /* head of list */
     marker: PhantomData<&'a NonNull<T>>,
 }
 
@@ -90,12 +89,11 @@ impl<'a, T: Linked<T>> Iterator for IterMut<'a, T> {
 
     #[inline]
     fn next(&mut self) -> Option<&'a mut T> {
-        if self.len == 0 {
+        if self.ref_node == self.head {
             None
         } else {
             if let Some(node) = self.ref_node {
                 unsafe {
-                    self.len -= 1;
                     self.ref_node = (*node.as_ptr()).next;
                     T::from_node(node).map(|ptr| {
                         &mut (*ptr.as_ptr())
@@ -112,7 +110,6 @@ impl<'a, T: Linked<T>> Iterator for IterMut<'a, T> {
 pub struct List<T: Linked<T>> {
     node: ListNode,
     ref_node: Option<NonNull<ListNode>>,    /* ref to node */
-    len: usize,
     marker: PhantomData<NonNull<T>>,
 }
 
@@ -124,7 +121,6 @@ impl<T: Linked<T>> List<T> {
         Self {
             node: ListNode::new(),
             ref_node: None,
-            len: 0,
             marker: PhantomData
         }
     }
@@ -138,15 +134,15 @@ impl<T: Linked<T>> List<T> {
     }
 
     pub fn iter(&self) -> Iter<T> {
-        Iter { ref_node: self.node.next, len: self.len, marker: PhantomData }
+        Iter { ref_node: self.node.next, head: self.ref_node, marker: PhantomData }
     }
 
     pub fn iter_mut(&mut self) -> IterMut<'_, T> {
-        IterMut { ref_node: self.node.next, len: self.len, marker: PhantomData }
+        IterMut { ref_node: self.node.next, head: self.ref_node, marker: PhantomData }
     }
 
     pub fn empty(&self) -> bool {
-        self.len == 0
+        self.node.next == self.ref_node
     }
 
     pub fn add_head(&mut self, mut elt: NonNull<T>) {
@@ -187,8 +183,6 @@ impl<T: Linked<T>> List<T> {
             unsafe {(*next.as_ptr()).prev = node;}
         }
         self.node.next = node;
-
-        self.len += 1;
     }
 
     /* Adds the given node to the tail of the list. */
@@ -202,8 +196,6 @@ impl<T: Linked<T>> List<T> {
             unsafe {(*prev.as_ptr()).next = node;}
         }
         self.node.prev = node;
-
-        self.len += 1;
     }
 
     pub fn add_tail(&mut self, mut elt: NonNull<T>) {
@@ -229,12 +221,23 @@ impl<T: Linked<T>> List<T> {
             unsafe {(*prev.as_ptr()).next = other.node.next.take();}
         }
         self.node.prev = other.node.prev.take();
-
-        self.len += mem::replace(&mut other.len, 0);
     }
 
     pub fn len(&self) -> usize {
-        self.len
+        let mut ret = 0;
+        let mut next = self.node.next;
+        while next != self.ref_node {
+            ret += 1;
+            if let Some(n) = next {
+                unsafe {
+                    next = (*n.as_ptr()).next;
+                }
+            } else {
+                break;
+            }
+        }
+
+        ret
     }
 }
 
