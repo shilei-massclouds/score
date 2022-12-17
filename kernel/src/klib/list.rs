@@ -8,7 +8,6 @@
 
 #![allow(dead_code)]
 
-use core::mem;
 use core::ptr::NonNull;
 use core::marker::PhantomData;
 
@@ -126,7 +125,6 @@ impl<T: Linked<T>> List<T> {
     }
 
     #[inline]
-    #[must_use]
     pub fn init(&mut self) {
         self.ref_node = NonNull::new(&mut self.node);
         self.node.next = self.ref_node;
@@ -162,7 +160,7 @@ impl<T: Linked<T>> List<T> {
             return None;
         }
 
-        let mut head = self.head();
+        let head = self.head();
         if let Some(mut node) = head {
             unsafe {
                 node.as_mut().delete_from_list();

@@ -14,12 +14,14 @@ use crate::pmm::pmm_alloc_range;
 use crate::klib::list::List;
 use crate::vm_page_state;
 
+#[allow(dead_code)]
 pub const ARCH_MMU_FLAG_PERM_USER:      usize = 1 << 2;
 pub const ARCH_MMU_FLAG_PERM_READ:      usize = 1 << 3;
 pub const ARCH_MMU_FLAG_PERM_WRITE:     usize = 1 << 4;
 pub const ARCH_MMU_FLAG_PERM_EXECUTE:   usize = 1 << 5;
 
 /* List of the kernel program's various segments. */
+#[allow(dead_code)]
 struct KernelRegion {
     name: &'static str,
     base: vaddr_t,
@@ -63,6 +65,7 @@ pub fn kernel_regions_base() -> usize {
 }
 
 // mark a range of physical pages as WIRED
+#[allow(dead_code)]
 pub fn mark_pages_in_use(pa: paddr_t, len: usize) {
     dprintf!(INFO, "pa {:x}, len {:x}\n", pa, len);
 
@@ -74,7 +77,7 @@ pub fn mark_pages_in_use(pa: paddr_t, len: usize) {
 
     let mut list = List::new();
     list.init();
-    pmm_alloc_range(pa, len / PAGE_SIZE, &mut list);
+    pmm_alloc_range(pa, len / PAGE_SIZE, &mut list).unwrap();
 
     /* mark all of the pages we allocated as WIRED */
     for page in list.iter_mut() {

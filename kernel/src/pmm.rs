@@ -331,7 +331,6 @@ impl PmmNode {
         self.decrement_free_count_locked(allocated as u64);
 
         if allocated != count {
-            panic!("alloc_range: {}, {}", allocated, count);
             /* we were not able to allocate the entire run, free these pages */
             self.free_list_locked(list);
             return Err(ErrNO::NotFound);
@@ -340,7 +339,7 @@ impl PmmNode {
         Ok(())
     }
 
-    fn alloc_page(&mut self, flags: usize) -> Option<NonNull<vm_page_t>> {
+    fn alloc_page(&mut self, _flags: usize) -> Option<NonNull<vm_page_t>> {
         let page = self.free_list.pop_head();
         if let Some(p) = page {
             unsafe {
@@ -353,7 +352,7 @@ impl PmmNode {
         return page;
     }
 
-    fn free_list_locked(&self, list: &mut List<vm_page_t>) {
+    fn free_list_locked(&self, _list: &mut List<vm_page_t>) {
         todo!("Implement [free_list_locked]");
     }
 
@@ -389,8 +388,9 @@ impl PmmNode {
 
 }
 
-pub fn pmm_alloc_range(address: paddr_t, count: usize, list: &mut List<vm_page_t>) {
-    PMM_NODE.lock().alloc_range(address, count, list);
+pub fn pmm_alloc_range(pa: paddr_t, count: usize, list: &mut List<vm_page_t>)
+    -> Result<(), ErrNO>{
+    PMM_NODE.lock().alloc_range(pa, count, list)
 }
 
 pub fn pmm_alloc_page(flags: usize) -> Option<NonNull<vm_page_t>> {

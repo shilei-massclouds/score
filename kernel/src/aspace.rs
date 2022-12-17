@@ -16,7 +16,7 @@ use crate::{KERNEL_ASPACE_BASE, KERNEL_ASPACE_SIZE};
 use crate::{ErrNO, types::vaddr_t, ZX_DEBUG_ASSERT};
 use crate::allocator::boot_heap_mark_pages_in_use;
 use crate::pmm::pmm_alloc_page;
-use crate::vm_page_state::{self, vm_page_state_t};
+use crate::vm_page_state;
 use crate::arch::mmu::arch_zero_page;
 
 /* Allow VmMappings to be created inside the new region with the SPECIFIC
@@ -70,6 +70,7 @@ impl VmAspaceList {
     }
 }
 
+#[allow(dead_code)]
 struct VmAspace {
     id: usize,
     as_type: VmAspaceType,
@@ -162,8 +163,9 @@ impl VmAddressRegion {
      * from the address space, and can vary based on whether the user has
      * requested compact allocations or not.
      */
-    fn alloc_spot_locked(&mut self, size: usize, align_pow2: usize, arch_mmu_flags: usize,
-        upper_limit: vaddr_t) -> vaddr_t {
+    fn alloc_spot_locked(&mut self, size: usize, align_pow2: usize,
+                         _arch_mmu_flags: usize, upper_limit: vaddr_t)
+        -> vaddr_t {
         ZX_DEBUG_ASSERT!(size > 0 && IS_PAGE_ALIGNED!(size));
         dprintf!(INFO, "aspace size 0x{:x} align {} upper_limit 0x{:x}\n",
                  size, align_pow2, upper_limit);
@@ -271,7 +273,7 @@ impl BootContext {
     }
 }
 
-static boot_context: Mutex<BootContext> = Mutex::new(BootContext::new());
+static BOOT_CONTEXT: Mutex<BootContext> = Mutex::new(BootContext::new());
 
 pub fn vm_init_preheap() -> Result<(), ErrNO> {
     /* allow the vmm a shot at initializing some of its data structures */
@@ -311,9 +313,9 @@ fn vm_init_preheap_vmars() {
     let mut kernel_physmap_vmar= VmAddressRegion::new();
     kernel_physmap_vmar.init(PHYSMAP_BASE, PHYSMAP_SIZE, flags);
 
-    let mut ctx = boot_context.lock();
-    let mut kernel_aspace = ctx.get_aspace_by_id(0);
-    let mut root_vmar = kernel_aspace.get_root_vmar();
+    let mut ctx = BOOT_CONTEXT.lock();
+    let kernel_aspace = ctx.get_aspace_by_id(0);
+    let root_vmar = kernel_aspace.get_root_vmar();
 
     root_vmar.insert_child(kernel_physmap_vmar);
 
@@ -374,7 +376,7 @@ fn kernel_aspace_init_preheap() -> Result<(), ErrNO> {
 
     let mut aspaces = VmAspaceList::new();
     aspaces.push(kernel_aspace);
-    boot_context.lock().vm_aspace_list = Some(aspaces);
+    BOOT_CONTEXT.lock().vm_aspace_list = Some(aspaces);
     dprintf!(INFO, "kernel_aspace_init_preheap ok!\n");
 
     Ok(())

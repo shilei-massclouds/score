@@ -9,7 +9,7 @@
 use alloc::alloc::{GlobalAlloc, Layout};
 use core::ptr::null_mut;
 use spin::{Mutex, MutexGuard};
-use crate::{defines::{_boot_heap, _boot_heap_end, physmap_to_paddr, kernel_va_to_pa}, vm::mark_pages_in_use};
+use crate::defines::{_boot_heap, _boot_heap_end};
 
 extern crate alloc;
 

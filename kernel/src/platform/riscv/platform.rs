@@ -24,7 +24,7 @@ use crate::{ROUNDUP_PAGE_SIZE, ROUNDUP};
 use crate::List;
 use crate::pmm::pmm_alloc_range;
 use spin::Mutex;
-use crate::vm_page_state::{self, vm_page_state_t};
+use crate::vm_page_state;
 
 pub mod boot_reserve;
 mod periphmap;
@@ -150,7 +150,7 @@ fn boot_reserve_wire() -> Result<(), ErrNO> {
             let mut alloc_page_list = List::new();
             alloc_page_list.init();
             let pages = ROUNDUP_PAGE_SIZE!(r.len) / PAGE_SIZE;
-            pmm_alloc_range(r.pa, pages, &mut alloc_page_list);
+            pmm_alloc_range(r.pa, pages, &mut alloc_page_list)?;
             total_list.splice(&mut alloc_page_list);
         }
     }
@@ -214,7 +214,7 @@ fn process_mem_ranges(mem_config: Vec<ZBIMemRange>)
             ZBIMemRangeType::RESERVED => {
                 dprintf!(INFO, "FIND RESERVED Memory Range {:x} {:x}!\n",
                          range.paddr, range.length);
-                boot_reserve_add_range(range.paddr, range.length);
+                boot_reserve_add_range(range.paddr, range.length)?;
             }
         }
     }

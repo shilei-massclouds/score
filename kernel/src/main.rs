@@ -13,7 +13,6 @@
 #![feature(const_nonnull_new)]
 
 use core::arch::global_asm;
-use alloc::string::String;
 use crate::debug::*;
 use crate::allocator::boot_heap_earliest_init;
 use crate::errors::ErrNO;
@@ -21,9 +20,7 @@ use crate::defines::*;
 use crate::platform::platform_early_init;
 use crate::pmm::PMM_NODE;
 use crate::aspace::vm_init_preheap;
-use crate::page::vm_page;
 use crate::klib::list::List;
-use core::ptr::NonNull;
 use crate::platform::RESERVED_PAGE_LIST;
 
 global_asm!(include_str!("arch/riscv64/start.S"));

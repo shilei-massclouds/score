@@ -13,8 +13,10 @@ use crate::vm_page_state;
 use crate::vm_page_state::vm_page_state_t;
 
   // logically private, use loaned getters and setters below.
+#[allow(non_upper_case_globals)]
 const kLoanedStateIsLoaned: u8 = 1;
-const kLoanedStateIsLoanCancelled: u8 = 2;
+#[allow(non_upper_case_globals)]
+const _kLoanedStateIsLoanCancelled: u8 = 2;
 
 #[allow(non_camel_case_types)]
 #[repr(C)]
@@ -43,17 +45,11 @@ impl Linked<vm_page> for vm_page {
 }
 
 impl vm_page {
-    pub const fn new() -> Self {
-        Self {
-            queue_node: ListNode::new(),
-            paddr: 0,
-            state: AtomicU8::new(vm_page_state::FREE),
-            loaned_state: AtomicU8::new(0),
-        }
-    }
-
     pub fn init(&mut self, paddr: paddr_t) {
+        self.queue_node = ListNode::new();
         self.paddr = paddr;
+        self.state = AtomicU8::new(vm_page_state::FREE);
+        self.loaned_state = AtomicU8::new(0);
     }
 
     pub fn paddr(&self) -> paddr_t {
