@@ -256,12 +256,16 @@ impl VmAddressRegion {
 
 struct BootContext {
     vm_aspace_list: Option<VmAspaceList>,
+    kernel_heap_base: usize,
+    kernel_heap_size: usize,
 }
 
 impl BootContext {
     const fn new() -> Self {
         Self {
             vm_aspace_list: None,
+            kernel_heap_base: 0,
+            kernel_heap_size: 0,
         }
     }
 
@@ -360,6 +364,9 @@ fn vm_init_preheap_vmars() {
     dprintf!(INFO, "VM: kernel heap placed in range [{:x}, {:x})\n",
              kernel_heap_vmar.base, kernel_heap_vmar.base + kernel_heap_vmar.size);
     root_vmar.insert_child(kernel_heap_vmar);
+
+    ctx.kernel_heap_base = kernel_heap_base;
+    ctx.kernel_heap_size = heap_bytes;
 }
 
 fn kernel_aspace_init_preheap() -> Result<(), ErrNO> {
@@ -380,4 +387,13 @@ fn kernel_aspace_init_preheap() -> Result<(), ErrNO> {
     dprintf!(INFO, "kernel_aspace_init_preheap ok!\n");
 
     Ok(())
+}
+
+/* Request the heap dimensions. */
+pub fn vm_get_kernel_heap_base() -> usize {
+    BOOT_CONTEXT.lock().kernel_heap_base
+}
+
+pub fn vm_get_kernel_heap_size() -> usize {
+    BOOT_CONTEXT.lock().kernel_heap_size
 }

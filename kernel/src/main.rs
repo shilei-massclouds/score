@@ -22,6 +22,7 @@ use crate::pmm::PMM_NODE;
 use crate::aspace::vm_init_preheap;
 use crate::klib::list::List;
 use crate::platform::RESERVED_PAGE_LIST;
+use crate::allocator::heap_init;
 
 global_asm!(include_str!("arch/riscv64/start.S"));
 
@@ -132,6 +133,11 @@ fn _lk_main() -> Result<(), ErrNO> {
     vm_init_preheap()?;
     // lk_primary_cpu_init_level(LK_INIT_LEVEL_VM_PREHEAP,
     //                           LK_INIT_LEVEL_HEAP - 1);
+
+    /* bring up the kernel heap */
+    dprintf!(SPEW, "initializing heap\n");
+    heap_init()?;
+    // lk_primary_cpu_init_level(LK_INIT_LEVEL_HEAP, LK_INIT_LEVEL_VM - 1);
 
     ///////////////////////////
 

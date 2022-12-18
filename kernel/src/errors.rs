@@ -17,8 +17,9 @@ pub enum ErrNO {
     NotFound,
     NotSupported,
 
-    NoDev,
+    InvalidArgs,
 
+    NoDev,
     NoMem,
 
     BadAlign,

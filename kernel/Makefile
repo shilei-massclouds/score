@@ -29,7 +29,6 @@ $(TARGET): $(KERNEL)
 
 $(KERNEL): FORCE
 	@cargo build --target riscv64gc-unknown-none-elf --release
-	#-Z build-std=core,alloc -Z build-std-features=compiler-builtins-mem
 	@$(NM) -n $@ | grep -v '\( [aNUw] \)\|\(__crc_\)\|\( \$[adt]\)\|\( \.L\)' > System.map
 
 clean:
