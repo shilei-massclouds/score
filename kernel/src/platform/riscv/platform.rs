@@ -7,7 +7,7 @@
  */
 
 use core::slice;
-use crate::{print, dprintf, ZX_DEBUG_ASSERT, IS_PAGE_ALIGNED, IS_ALIGNED};
+use crate::{print, dprintf, ZX_ASSERT, IS_PAGE_ALIGNED, IS_ALIGNED};
 use crate::debug::*;
 use crate::types::*;
 use alloc::vec::Vec;
@@ -111,7 +111,7 @@ pub fn platform_early_init() -> Result<(), ErrNO> {
 
     /* add any pending memory arenas the memory limit library has pending */
     if have_limit {
-        ZX_DEBUG_ASSERT!(memory_limit_add_arenas().is_ok());
+        ZX_ASSERT!(memory_limit_add_arenas().is_ok());
     }
 
     /* tell the boot allocator to mark ranges we've reserved as off limits */
@@ -321,7 +321,7 @@ fn early_init_dt_scan_chosen(dt: &DeviceTree) -> &str {
         let end =
             chosen.prop_u32_at("linux,initrd-end", 0).unwrap() as paddr_t;
 
-        ZX_DEBUG_ASSERT!(IS_PAGE_ALIGNED!(end));
+        ZX_ASSERT!(IS_PAGE_ALIGNED!(end));
         dprintf!(INFO, "reserving ramdisk phys range [{:x}, {:x}]\n",
                  start, end - 1);
 

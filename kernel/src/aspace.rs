@@ -13,7 +13,7 @@ use crate::defines::*;
 use crate::debug::*;
 use crate::vm::*;
 use crate::{KERNEL_ASPACE_BASE, KERNEL_ASPACE_SIZE};
-use crate::{ErrNO, types::vaddr_t, ZX_DEBUG_ASSERT};
+use crate::{ErrNO, types::vaddr_t, ZX_ASSERT};
 use crate::allocator::boot_heap_mark_pages_in_use;
 use crate::pmm::pmm_alloc_page;
 use crate::vm_page_state;
@@ -145,7 +145,7 @@ impl VmAddressRegion {
 
     fn insert_child(&mut self, child: Self) {
         /* Validate we are a correct child of our parent. */
-        ZX_DEBUG_ASSERT!(self.cover_range(child.base, child.size));
+        ZX_ASSERT!(self.cover_range(child.base, child.size));
 
         let start = child.base;
         let end = start + child.size;
@@ -166,7 +166,7 @@ impl VmAddressRegion {
     fn alloc_spot_locked(&mut self, size: usize, align_pow2: usize,
                          _arch_mmu_flags: usize, upper_limit: vaddr_t)
         -> vaddr_t {
-        ZX_DEBUG_ASSERT!(size > 0 && IS_PAGE_ALIGNED!(size));
+        ZX_ASSERT!(size > 0 && IS_PAGE_ALIGNED!(size));
         dprintf!(INFO, "aspace size 0x{:x} align {} upper_limit 0x{:x}\n",
                  size, align_pow2, upper_limit);
 
@@ -175,7 +175,7 @@ impl VmAddressRegion {
             self.base, self.size, upper_limit);
         /* Sanity check that the allocation fits. */
         let (_, overflowed) = alloc_spot.overflowing_add(size - 1);
-        ZX_DEBUG_ASSERT!(!overflowed);
+        ZX_ASSERT!(!overflowed);
         return alloc_spot;
     }
 
@@ -184,10 +184,10 @@ impl VmAddressRegion {
         parent_base: vaddr_t, parent_size: usize, upper_limit: vaddr_t) -> vaddr_t {
         let (alloc_spot, found) =
             self.find_alloc_spot_in_gaps(size, align_pow2, parent_base, parent_size, upper_limit);
-        ZX_DEBUG_ASSERT!(found);
+        ZX_ASSERT!(found);
 
         let align: vaddr_t = 1 << align_pow2;
-        ZX_DEBUG_ASSERT!(IS_ALIGNED!(alloc_spot, align));
+        ZX_ASSERT!(IS_ALIGNED!(alloc_spot, align));
         return alloc_spot;
     }
 
@@ -200,7 +200,7 @@ impl VmAddressRegion {
         /* alloc_spot is the virtual start address of the spot to allocate if we find one. */
         let mut alloc_spot: vaddr_t = 0;
         let func = |gap_base: vaddr_t, gap_len: usize| {
-            ZX_DEBUG_ASSERT!(IS_ALIGNED!(gap_base, align));
+            ZX_ASSERT!(IS_ALIGNED!(gap_base, align));
             if gap_len < size || gap_base + size > upper_limit {
                 /* Ignore gap that is too small or out of range. */
                 return true;
@@ -295,7 +295,7 @@ pub fn vm_init_preheap() -> Result<(), ErrNO> {
         unsafe {
             page.as_mut().set_state(vm_page_state::WIRED);
             let va = paddr_to_physmap(page.as_ref().paddr());
-            ZX_DEBUG_ASSERT!(va != 0);
+            ZX_ASSERT!(va != 0);
             arch_zero_page(va);
         }
     } else {

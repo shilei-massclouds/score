@@ -20,6 +20,6 @@ fn panic(info: &PanicInfo) -> ! {
 }
 
 #[macro_export]
-macro_rules! ZX_DEBUG_ASSERT {
+macro_rules! ZX_ASSERT {
     ($expr: expr) => (assert!($expr));
 }

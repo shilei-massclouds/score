@@ -10,6 +10,7 @@
 
 use core::ptr::NonNull;
 use core::marker::PhantomData;
+use crate::ZX_ASSERT;
 
 pub trait Linked<T> {
     fn from_node(ptr: NonNull<ListNode>) -> Option<NonNull<T>> {
@@ -20,6 +21,13 @@ pub trait Linked<T> {
 
     fn delete_from_list(&mut self) {
         self.into_node().delete_from_list();
+    }
+
+    fn next(&mut self) -> Option<NonNull<T>> {
+        match self.into_node().next() {
+            Some(ptr) => Self::from_node(ptr),
+            None => None,
+        }
     }
 }
 
@@ -46,6 +54,10 @@ impl ListNode {
         if let Some(prev) = self.prev.take() {
             unsafe {(*prev.as_ptr()).next = self.next.take();}
         }
+    }
+
+    pub fn next(&self) -> Option<NonNull<Self>> {
+        self.next
     }
 }
 
@@ -131,6 +143,19 @@ impl<T: Linked<T>> List<T> {
         self.node.prev = self.ref_node;
     }
 
+    #[inline]
+    pub fn is_initialized(&self) -> bool {
+        !self.ref_node.is_none()
+    }
+
+    #[inline]
+    pub fn node(&self) -> Option<NonNull<T>> {
+        match self.ref_node {
+            Some(node) => T::from_node(node),
+            None => None
+        }
+    }
+
     pub fn iter(&self) -> Iter<T> {
         Iter { ref_node: self.node.next, head: self.ref_node, marker: PhantomData }
     }
@@ -144,10 +169,12 @@ impl<T: Linked<T>> List<T> {
     }
 
     pub fn add_head(&mut self, mut elt: NonNull<T>) {
+        ZX_ASSERT!(self.is_initialized());
         unsafe { self.add_head_node(elt.as_mut().into_node()); }
     }
 
     pub fn head(&self) -> Option<NonNull<T>> {
+        ZX_ASSERT!(self.is_initialized());
         if let Some(next) = self.node.next {
             T::from_node(next)
         } else {
@@ -155,7 +182,17 @@ impl<T: Linked<T>> List<T> {
         }
     }
 
+    pub fn tail(&self) -> Option<NonNull<T>> {
+        ZX_ASSERT!(self.is_initialized());
+        if let Some(prev) = self.node.prev {
+            T::from_node(prev)
+        } else {
+            None
+        }
+    }
+
     pub fn pop_head(&mut self) -> Option<NonNull<T>> {
+        ZX_ASSERT!(self.is_initialized());
         if self.node.next == self.ref_node {
             return None;
         }
@@ -197,10 +234,12 @@ impl<T: Linked<T>> List<T> {
     }
 
     pub fn add_tail(&mut self, mut elt: NonNull<T>) {
+        ZX_ASSERT!(self.is_initialized());
         unsafe { self.add_tail_node(elt.as_mut().into_node()); }
     }
 
     pub fn splice(&mut self, other: &mut Self) {
+        ZX_ASSERT!(self.is_initialized());
         if other.node.prev == other.ref_node {
             return;
         }

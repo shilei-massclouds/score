@@ -12,8 +12,8 @@ use alloc::string::String;
 use crate::debug::*;
 use crate::ErrNO;
 use crate::klib::list::Linked;
-use crate::{print, dprintf, ZX_DEBUG_ASSERT};
-use crate::{PAGE_SIZE, paddr_to_physmap};
+use crate::{print, dprintf, ZX_ASSERT};
+use crate::{PAGE_SIZE, PAGE_SHIFT, paddr_to_physmap};
 use spin::Mutex;
 use alloc::vec::Vec;
 use core::sync::atomic::AtomicU64;
@@ -198,7 +198,7 @@ impl PmmArena {
         }
 
         let index = (pa - self.base()) / PAGE_SIZE;
-        ZX_DEBUG_ASSERT!(index < self.size() / PAGE_SIZE);
+        ZX_ASSERT!(index < self.size() / PAGE_SIZE);
 
         self.page_array.get_page(index)
     }
@@ -278,10 +278,10 @@ impl PmmNode {
                    list: &mut List<vm_page_t>) -> Result<(), ErrNO> {
         dprintf!(INFO, "address {:x}, count {:x}\n", address, count);
 
-        /* ZX_DEBUG_ASSERT!(
+        /* ZX_ASSERT!(
          * Thread::Current::memory_allocation_state().IsEnabled()); */
 
-        ZX_DEBUG_ASSERT!(list.empty());
+        ZX_ASSERT!(list.empty());
         if count == 0 {
             return Ok(());
         }
@@ -344,12 +344,42 @@ impl PmmNode {
         if let Some(p) = page {
             unsafe {
                 dprintf!(INFO, "alloc page: pa {:x}\n", p.as_ref().paddr());
-                ZX_DEBUG_ASSERT!(!p.as_ref().is_loaned());
+                ZX_ASSERT!(!p.as_ref().is_loaned());
                 self.alloc_page_helper_locked(p);
             }
             self.decrement_free_count_locked(1);
         }
         return page;
+    }
+
+    fn alloc_pages(&mut self, mut count: usize, alloc_flags: usize,
+                   list: &mut List<vm_page_t>)
+        -> Result<(), ErrNO> {
+
+        //ZX_ASSERT!(Thread::Current::memory_allocation_state().IsEnabled());
+
+        /* list must be initialized prior to calling this */
+        ZX_ASSERT!(list.is_initialized());
+
+        if count == 0 {
+            return Ok(());
+        } else if count == 1 {
+            let page = self.alloc_page(alloc_flags).ok_or_else(||ErrNO::NoMem)?;
+            list.add_tail(page);
+            return Ok(());
+        }
+
+        while count > 0 {
+            let page = self.free_list.pop_head().ok_or_else(||ErrNO::NoMem)?;
+            unsafe {
+                self.alloc_page_helper_locked(page);
+            }
+            list.add_tail(page);
+            self.decrement_free_count_locked(1);
+            count -= 1;
+        }
+
+        Ok(())
     }
 
     fn free_list_locked(&self, _list: &mut List<vm_page_t>) {
@@ -360,7 +390,7 @@ impl PmmNode {
         dprintf!(SPEW, "allocating page pa {:x}, prev state {:x}\n",
                  page.as_ref().paddr(), page.as_ref().state());
 
-        ZX_DEBUG_ASSERT!(page.as_ref().is_free());
+        ZX_ASSERT!(page.as_ref().is_free());
 
         if page.as_ref().is_loaned() {
             /* We want the set_stack_owner() to be visible before set_state(),
@@ -382,7 +412,7 @@ impl PmmNode {
     }
 
     fn decrement_free_count_locked(&mut self, amount: u64) {
-        ZX_DEBUG_ASSERT!(self.free_count.load(Ordering::Relaxed) >= amount);
+        ZX_ASSERT!(self.free_count.load(Ordering::Relaxed) >= amount);
         self.free_count.fetch_sub(amount, Ordering::Relaxed);
     }
 
@@ -397,11 +427,34 @@ pub fn pmm_alloc_page(flags: usize) -> Option<NonNull<vm_page_t>> {
     PMM_NODE.lock().alloc_page(flags)
 }
 
+pub fn pmm_alloc_pages(count: usize, alloc_flags: usize,
+                       list: &mut List<vm_page_t>)
+    -> Result<(), ErrNO> {
+    PMM_NODE.lock().alloc_pages(count, alloc_flags, list)
+}
+
 pub fn pmm_add_arena(info: ArenaInfo) -> Result<(), ErrNO> {
     let mut pmm_node = PMM_NODE.lock();
     dprintf!(INFO, "Arena.{}: flags[{:x}] {:x} {:x}\n",
              info.name, info.flags, info.base, info.size);
     pmm_node.add_arena(info)
+}
+
+pub fn pmm_alloc_contiguous(count: usize, alloc_flags: usize,
+                            alignment_log2: usize, pa: &mut paddr_t,
+                            list: &mut List<vm_page_t>) -> Result<(), ErrNO> {
+    let mut pmm_node = PMM_NODE.lock();
+    /* if we're called with a single page, just fall through to
+     * the regular allocation routine */
+    if count == 1 && alignment_log2 <= PAGE_SHIFT {
+        let page =
+            pmm_node.alloc_page(alloc_flags).ok_or_else(||ErrNO::NoMem)?;
+        list.add_tail(page);
+        return Ok(());
+    }
+    
+    todo!("pmm_alloc_contiguous");
+    //pmm_node.alloc_contiguous(count, alloc_flags, alignment_log2, pa, list)
 }
 
 pub static PMM_NODE: Mutex<PmmNode> = Mutex::new(PmmNode::new());

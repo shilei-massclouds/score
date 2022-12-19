@@ -104,7 +104,7 @@ fn _lk_main() -> Result<(), ErrNO> {
 
     /* At this point the physmap is available. */
     dtb_from_phys();
-    ZX_DEBUG_ASSERT!(dtb_pa() != 0);
+    ZX_ASSERT!(dtb_pa() != 0);
 
     platform_early_init()?;
 

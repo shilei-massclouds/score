@@ -10,7 +10,7 @@ use crate::types::*;
 use crate::errors::ErrNO;
 use alloc::vec::Vec;
 use crate::debug::*;
-use crate::{dprintf, print, ZX_DEBUG_ASSERT};
+use crate::{dprintf, print, ZX_ASSERT};
 use spin::Mutex;
 use crate::klib::range::intersects;
 
@@ -41,7 +41,7 @@ pub fn boot_reserve_add_range(pa: paddr_t, len: usize) -> Result<(), ErrNO> {
 
     /* insert into the list, sorted */
     let end: paddr_t = pa + len - 1;
-    ZX_DEBUG_ASSERT!(end > pa);
+    ZX_ASSERT!(end > pa);
 
     let mut i = 0;
     while i < res.len() {

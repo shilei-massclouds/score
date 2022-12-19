@@ -9,7 +9,7 @@
 #![allow(dead_code)]
 
 use crate::types::*;
-use crate::ZX_DEBUG_ASSERT;
+use crate::ZX_ASSERT;
 use crate::config_generated::*;
 
 pub const CHAR_BITS: usize = 8;
@@ -149,12 +149,12 @@ pub fn paddr_to_physmap(pa: paddr_t) -> vaddr_t {
 
 /* given a pointer into the physmap, reverse back to a physical address */
 pub fn physmap_to_paddr(va: vaddr_t) -> paddr_t {
-    ZX_DEBUG_ASSERT!(is_physmap_addr(va));
+    ZX_ASSERT!(is_physmap_addr(va));
     va - PHYSMAP_BASE + PHYSMAP_BASE_PHYS
 }
 
 /* given a pointer into the physmap, reverse back to a physical address */
 pub fn kernel_va_to_pa(va: vaddr_t) -> paddr_t {
-    ZX_DEBUG_ASSERT!(!is_physmap_addr(va));
+    ZX_ASSERT!(!is_physmap_addr(va));
     va - kernel_base_virt() + kernel_base_phys()
 }
