@@ -11,3 +11,4 @@
 pub type paddr_t = usize;
 pub type vaddr_t = usize;
 pub type prot_t = usize;
+pub type pte_t = u64;

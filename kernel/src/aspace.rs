@@ -6,6 +6,9 @@
  * at https://opensource.org/licenses/MIT
  */
 
+use crate::arch::mmu::MMU_KERNEL_TOP_SHIFT;
+use crate::arch::mmu::PAGE_KERNEL;
+use crate::types::*;
 use alloc::vec::Vec;
 use spin::Mutex;
 use core::cmp::max;
@@ -70,12 +73,32 @@ impl VmAspaceList {
     }
 }
 
+/* Map the given array of pages into the virtual address space starting at
+ * |vaddr|, in the order they appear in |phys|.
+ * If any address in the range [vaddr, vaddr + count * PAGE_SIZE) is already
+ * mapped when this is called, and the |existing_action| is |Error| then this
+ * returns ZX_ERR_ALREADY_EXISTS, otherwise they are skipped. Skipped pages
+ * are stil counted in |mapped|. On failure some pages may still be mapped,
+ * the number of which will be reported in |mapped|. */
+#[derive(PartialEq)]
+pub enum ExistingEntryAction {
+    Skip,
+    Error,
+}
+
 #[allow(dead_code)]
-struct VmAspace {
+pub struct VmAspace {
     id: usize,
     as_type: VmAspaceType,
     base: vaddr_t,
     size: usize,
+
+    /* Once-computed page shift constants */
+    vaddr_base: vaddr_t,        /* Offset that should be applied to
+                                   address to compute PTE indices. */
+    top_size_shift: usize,      /* Log2 of aspace size. */
+    top_index_shift: usize,     /* Log2 top level shift. */
+
     root_vmar: Option<VmAddressRegion>,
 }
 
@@ -87,6 +110,9 @@ impl VmAspace {
             as_type,
             base,
             size,
+            vaddr_base: KERNEL_ASPACE_BASE,
+            top_size_shift: KERNEL_ASPACE_BITS,
+            top_index_shift: MMU_KERNEL_TOP_SHIFT,
             root_vmar: None,
         }
     }
@@ -107,6 +133,87 @@ impl VmAspace {
             return vmar;
         }
         panic!("no root vmar!");
+    }
+
+    const fn is_valid_vaddr(&self, vaddr: vaddr_t) -> bool {
+        vaddr >= self.base && vaddr <= self.base + self.size - 1
+    }
+
+    pub fn map(&mut self, vaddr: vaddr_t, phys: &[paddr_t],
+               count: usize, mmu_flags: usize,
+               action: ExistingEntryAction) -> Result<usize, ErrNO> {
+
+        //DEBUG_ASSERT(tt_virt_);
+
+        if !self.is_valid_vaddr(vaddr) {
+            return Err(ErrNO::OutOfRange);
+        }
+        for i in 0..count {
+            ZX_ASSERT!(IS_PAGE_ALIGNED!(phys[i]));
+            if !IS_PAGE_ALIGNED!(phys[i]) {
+              return Err(ErrNO::InvalidArgs);
+            }
+        }
+
+        if (mmu_flags & ARCH_MMU_FLAG_PERM_READ) == 0 {
+            return Err(ErrNO::InvalidArgs);
+        }
+
+        /* vaddr must be aligned. */
+        ZX_ASSERT!(IS_PAGE_ALIGNED!(vaddr));
+        if !IS_PAGE_ALIGNED!(vaddr) {
+            return Err(ErrNO::InvalidArgs);
+        }
+
+        if count == 0 {
+            return Ok(0);
+        }
+
+        let mut total_mapped = 0;
+        let mut v = vaddr;
+        let prot = PAGE_KERNEL;
+        for idx in 0..count {
+            let paddr = phys[idx];
+            ZX_ASSERT!(IS_PAGE_ALIGNED!(paddr));
+            match self.map_pages(v, paddr, PAGE_SIZE, prot, self.vaddr_base) {
+                Ok(ret) => {
+                    total_mapped += ret / PAGE_SIZE;
+                },
+                Err(e) => {
+                    if e != ErrNO::AlreadyExists || action == ExistingEntryAction::Error {
+                        return Err(e);
+                    }
+                },
+            }
+            //MarkAspaceModified();
+
+            v += PAGE_SIZE;
+        }
+
+        todo!("map!");
+        Ok(count)
+    }
+
+    fn map_pages(&self, vaddr: vaddr_t, paddr: paddr_t, size: usize,
+                 prot: prot_t, vaddr_base: vaddr_t) -> Result<usize, ErrNO> {
+        let vaddr_rel = vaddr - vaddr_base;
+        let vaddr_rel_max = 1 << self.top_size_shift;
+
+        dprintf!(INFO, "vaddr {:x}, paddr {:x}, size {:x}, prot {:x}\n",
+                 vaddr, paddr, size, prot);
+
+        if vaddr_rel > vaddr_rel_max - size || size > vaddr_rel_max {
+            return Err(ErrNO::InvalidArgs);
+        }
+
+        self.map_page_table(vaddr, vaddr_rel, paddr, size, prot,
+                            self.top_index_shift)
+    }
+
+    fn map_page_table(&self, vaddr: vaddr_t, vaddr_rel: vaddr_t,
+                      paddr: paddr_t, size: usize, prot: prot_t,
+                      index_shift: usize) -> Result<usize, ErrNO> {
+        Ok(0)
     }
 }
 
@@ -254,7 +361,7 @@ impl VmAddressRegion {
 
 }
 
-struct BootContext {
+pub struct BootContext {
     vm_aspace_list: Option<VmAspaceList>,
     kernel_heap_base: usize,
     kernel_heap_size: usize,
@@ -275,9 +382,13 @@ impl BootContext {
         }
         panic!("NOT init aspaces yet!");
     }
+
+    pub fn kernel_aspace(&mut self) -> &mut VmAspace {
+        self.get_aspace_by_id(0)
+    }
 }
 
-static BOOT_CONTEXT: Mutex<BootContext> = Mutex::new(BootContext::new());
+pub static BOOT_CONTEXT: Mutex<BootContext> = Mutex::new(BootContext::new());
 
 pub fn vm_init_preheap() -> Result<(), ErrNO> {
     /* allow the vmm a shot at initializing some of its data structures */

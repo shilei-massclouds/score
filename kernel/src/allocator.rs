@@ -13,12 +13,18 @@ use spin::{Mutex, MutexGuard};
 use crate::vm_page_state::{self, *};
 use crate::defines::{_boot_heap, _boot_heap_end};
 use crate::ARCH_HEAP_ALIGN_BITS;
-use crate::aspace::{vm_get_kernel_heap_base, vm_get_kernel_heap_size};
+use crate::aspace::{
+    vm_get_kernel_heap_base, vm_get_kernel_heap_size, ExistingEntryAction
+};
 use crate::{ErrNO, PAGE_SHIFT, PAGE_SIZE, CHAR_BITS, ZX_ASSERT};
 use crate::types::*;
 use crate::klib::list::{List, Linked};
 use crate::page::vm_page_t;
 use crate::pmm::{pmm_alloc_pages, pmm_alloc_contiguous};
+use crate::aspace::BOOT_CONTEXT;
+use crate::vm::{
+    ARCH_MMU_FLAG_CACHED, ARCH_MMU_FLAG_PERM_READ, ARCH_MMU_FLAG_PERM_WRITE
+};
 
 extern crate alloc;
 
@@ -201,6 +207,10 @@ impl VirtualAlloc {
 
     fn alloc_map_pages(&self, va: vaddr_t, num_pages: usize)
         -> Result<(), ErrNO> {
+
+        let mmu_flags = ARCH_MMU_FLAG_CACHED |
+            ARCH_MMU_FLAG_PERM_READ | ARCH_MMU_FLAG_PERM_WRITE;
+
         ZX_ASSERT!(num_pages > 0);
 
         let align_pages = 1 << (self.align_log2 - PAGE_SHIFT);
@@ -209,7 +219,7 @@ impl VirtualAlloc {
         let mut alloc_pages = List::<vm_page_t>::new();
         alloc_pages.init();
 
-        let mapped_count = 0;
+        let mut mapped_count = 0;
         while mapped_count + align_pages <= num_pages {
             let mut contiguous_pages = List::<vm_page_t>::new();
             contiguous_pages.init();
@@ -264,19 +274,15 @@ impl VirtualAlloc {
                 }
             }
 
+            let mapped = BOOT_CONTEXT.lock().kernel_aspace().map(
+                va + mapped_count * PAGE_SIZE, &paddrs[..], map_pages,
+                mmu_flags, ExistingEntryAction::Error)?;
+
+            ZX_ASSERT!(mapped == map_pages);
+            mapped_count += map_pages;
+
             todo!("### mapped_count: {}, {}", mapped_count, num_pages);
         }
-        /*
-    size_t mapped = 0;
-    status = VmAspace::kernel_aspace()->arch_aspace().Map(
-        vaddr + mapped_count * PAGE_SIZE, paddrs, map_pages, kMmuFlags,
-        ArchVmAspace::ExistingEntryAction::Error, &mapped);
-    if (status != ZX_OK) {
-      return status;
-    }
-    ZX_ASSERT(mapped == map_pages);
-    mapped_count += map_pages;
-    */
 
         todo!("### {}, {}, {}", mapped_count, align_pages, num_pages);
 

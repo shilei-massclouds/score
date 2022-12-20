@@ -187,6 +187,10 @@ macro_rules! PA_TO_PFN {
     }
 }
 
+pub const MMU_KERNEL_SIZE_SHIFT: usize = KERNEL_ASPACE_BITS;
+
+pub const MMU_KERNEL_TOP_SHIFT: usize = LEVEL_SHIFT!(1);
+
 fn vaddr_to_index(addr: usize, level: usize) -> usize {
     (addr >> LEVEL_SHIFT!(level)) & (PAGE_TABLE_ENTRIES - 1)
 }
