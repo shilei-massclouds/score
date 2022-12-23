@@ -280,11 +280,7 @@ impl VirtualAlloc {
 
             ZX_ASSERT!(mapped == map_pages);
             mapped_count += map_pages;
-
-            todo!("### mapped_count: {}, {}", mapped_count, num_pages);
         }
-
-        todo!("### {}, {}, {}", mapped_count, align_pages, num_pages);
 
         Ok(())
     }

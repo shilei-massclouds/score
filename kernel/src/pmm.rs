@@ -26,6 +26,10 @@ use crate::platform::boot_reserve::{
     BootReserveRange, boot_reserve_range_search
 };
 
+/* flags for allocation routines below */
+pub const PMM_ALLOC_FLAG_ANY: usize = 0 << 0;   /* no restrictions on which
+                                                   arena to allocate from */
+
 /* all of the configured memory arenas */
 pub const MAX_ARENAS: usize = 16;
 
@@ -441,8 +445,9 @@ pub fn pmm_add_arena(info: ArenaInfo) -> Result<(), ErrNO> {
 }
 
 pub fn pmm_alloc_contiguous(count: usize, alloc_flags: usize,
-                            alignment_log2: usize, pa: &mut paddr_t,
-                            list: &mut List<vm_page_t>) -> Result<(), ErrNO> {
+                            alignment_log2: usize, _pa: &mut paddr_t,
+                            list: &mut List<vm_page_t>)
+    -> Result<(), ErrNO> {
     let mut pmm_node = PMM_NODE.lock();
     /* if we're called with a single page, just fall through to
      * the regular allocation routine */
@@ -452,7 +457,7 @@ pub fn pmm_alloc_contiguous(count: usize, alloc_flags: usize,
         list.add_tail(page);
         return Ok(());
     }
-    
+
     todo!("pmm_alloc_contiguous");
     //pmm_node.alloc_contiguous(count, alloc_flags, alignment_log2, pa, list)
 }

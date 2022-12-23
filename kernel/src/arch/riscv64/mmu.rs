@@ -13,6 +13,12 @@ use crate::types::*;
 use crate::defines::*;
 use crate::errors::ErrNO;
 use crate::stdio::STDOUT;
+use crate::debug::*;
+use crate::vm_page_state;
+use core::ptr::NonNull;
+use crate::page::vm_page_t;
+use crate::pmm::{pmm_alloc_page, PMM_ALLOC_FLAG_ANY};
+use crate::{dprintf, print};
 
 const PAGE_TABLE_ENTRIES: usize = 1 << (PAGE_SHIFT - 3);
 
@@ -57,6 +63,8 @@ pub const SATP_MODE_39: usize = 0x8000000000000000;
 pub const SATP_MODE_48: usize = 0x9000000000000000;
 pub const SATP_MODE_57: usize = 0xa000000000000000;
 
+const MMU_PTE_DESCRIPTOR_LEAF_MAX_SHIFT: usize = 30;
+
 #[repr(C, align(4096))]
 pub struct PageTable([usize; PAGE_TABLE_ENTRIES]);
 
@@ -75,6 +83,10 @@ impl PageTable {
 
     fn item_descend(&self, index: usize) -> usize {
         (self.0[index] >> _PAGE_PFN_SHIFT) << PAGE_SHIFT
+    }
+
+    fn item(&self, index: usize) -> usize {
+        self.0[index]
     }
 }
 
@@ -144,9 +156,6 @@ pub fn boot_map<F1, F2>(vaddr: vaddr_t, paddr: paddr_t, len: usize,
      * using the largest page size supported.
      * Allocates necessar page tables along the way. */
     unsafe {
-    STDOUT.lock().puts("boot_map[");
-    STDOUT.lock().put_u64(KERNEL_ASPACE_BITS as u64);
-    STDOUT.lock().puts("]boot_map\n");
         _boot_map(&mut _swapper_pgd, 0, vaddr, paddr, len, prot,
                   alloc, phys_to_virt)
     }
@@ -187,6 +196,7 @@ macro_rules! PA_TO_PFN {
     }
 }
 
+#[allow(dead_code)]
 pub const MMU_KERNEL_SIZE_SHIFT: usize = KERNEL_ASPACE_BITS;
 
 pub const MMU_KERNEL_TOP_SHIFT: usize = LEVEL_SHIFT!(1);
@@ -262,4 +272,120 @@ pub unsafe fn arch_zero_page(va: vaddr_t) {
         in(reg) va,
         in(reg) (va + PAGE_SIZE),
     );
+}
+
+pub fn map_pages(vaddr: vaddr_t, paddr: paddr_t, size: usize,
+                 prot: prot_t, vaddr_base: vaddr_t,
+                 top_size_shift: usize,
+                 top_index_shift: usize)
+    -> Result<usize, ErrNO> {
+    let vaddr_rel = vaddr - vaddr_base;
+    let vaddr_rel_max = 1 << top_size_shift;
+
+    dprintf!(INFO, "vaddr {:x}, paddr {:x}, size {:x}, prot {:x}\n",
+             vaddr, paddr, size, prot);
+
+    if vaddr_rel > vaddr_rel_max - size || size > vaddr_rel_max {
+        return Err(ErrNO::InvalidArgs);
+    }
+
+    unsafe {
+        map_page_table(vaddr, vaddr_rel, paddr, size, prot, top_index_shift,
+                       &mut _swapper_pgd)
+    }
+}
+
+pub fn map_page_table(mut vaddr: vaddr_t, mut vaddr_rel: vaddr_t,
+                      mut paddr: paddr_t, mut size: usize, prot: prot_t,
+                      index_shift: usize, page_table: &mut PageTable)
+    -> Result<usize, ErrNO> {
+
+    let block_size = 1 << index_shift;
+    let block_mask = block_size - 1;
+    dprintf!(INFO, "vaddr {:x}, vaddr_rel {:x}, paddr {:x}, size {:x}, \
+             prot {:x}, index shift {}\n",
+             vaddr, vaddr_rel, paddr, size, prot, index_shift);
+
+    if ((vaddr_rel | paddr | size) & ((1 << PAGE_SHIFT) - 1)) != 0 {
+        return Err(ErrNO::InvalidArgs);
+    }
+
+    let mut mapped_size = 0;
+    while size > 0 {
+        let vaddr_rem = vaddr_rel & block_mask;
+        let chunk_size = min(size, block_size - vaddr_rem);
+        let index = vaddr_rel >> index_shift;
+        let pte = page_table.item(index);
+
+        /* if we're at an unaligned address, not trying to map a block,
+         * and not at the terminal level, recurse one more level of
+         * the page table tree */
+        if ((vaddr_rel | paddr) & block_mask) != 0 ||
+            (chunk_size != block_size) ||
+            (index_shift > MMU_PTE_DESCRIPTOR_LEAF_MAX_SHIFT) {
+
+            let next_pt: *mut PageTable;
+            if page_table.item_present(index) {
+                if page_table.item_leaf(index) {
+                    dprintf!(WARN, "page table entry already in use, {:x}\n",
+                             pte);
+                    return Err(ErrNO::AlreadyExists);
+                } else {
+                    next_pt = paddr_to_physmap(page_table.item_descend(index))
+                        as *mut PageTable;
+                }
+            } else {
+                let page_table_paddr = alloc_page_table()?;
+                let pt_vaddr = paddr_to_physmap(page_table_paddr);
+                dprintf!(INFO, "allocated page table, va {:x}, pa {:x}\n",
+                         pt_vaddr, page_table_paddr);
+
+                unsafe {
+                    arch_zero_page(pt_vaddr);
+                    /* Fence */
+                }
+
+                page_table.mk_item(index, PA_TO_PFN!(page_table_paddr),
+                                   PAGE_TABLE);
+                next_pt = pt_vaddr as *mut PageTable;
+            }
+
+            unsafe {
+                map_page_table(vaddr, vaddr_rem, paddr, chunk_size, prot,
+                               index_shift - (PAGE_SHIFT - 3),
+                               &mut (*next_pt))?;
+            }
+        } else {
+            if page_table.item_present(index) {
+                dprintf!(WARN, "page table entry already in use, {:x}\n", pte);
+                return Err(ErrNO::AlreadyExists);
+            }
+
+            page_table.mk_item(index, PA_TO_PFN!(paddr), prot);
+            dprintf!(INFO, "pte [{}] = {:x} (pa {:x})\n", index, pte, paddr);
+        }
+
+        vaddr += chunk_size;
+        vaddr_rel += chunk_size;
+        paddr += chunk_size;
+        size -= chunk_size;
+        mapped_size += chunk_size;
+    }
+
+    Ok(mapped_size)
+}
+
+fn alloc_page_table() -> Result<paddr_t, ErrNO> {
+    let mut page = cache_alloc_page()?;
+
+    unsafe {
+        page.as_mut().set_state(vm_page_state::MMU);
+        //kcounter_add(vm_mmu_page_table_alloc, 1);
+        return Ok(page.as_ref().paddr());
+    }
+}
+
+fn cache_alloc_page() -> Result<NonNull<vm_page_t>, ErrNO> {
+    /* Todo: Implement PageCache on the next step. */
+    pmm_alloc_page(PMM_ALLOC_FLAG_ANY).ok_or_else(||ErrNO::NoMem)
 }

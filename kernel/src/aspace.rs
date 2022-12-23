@@ -21,6 +21,7 @@ use crate::allocator::boot_heap_mark_pages_in_use;
 use crate::pmm::pmm_alloc_page;
 use crate::vm_page_state;
 use crate::arch::mmu::arch_zero_page;
+use crate::arch::mmu::map_pages;
 
 /* Allow VmMappings to be created inside the new region with the SPECIFIC
  * or OFFSET_IS_UPPER_LIMIT flag. */
@@ -80,6 +81,7 @@ impl VmAspaceList {
  * returns ZX_ERR_ALREADY_EXISTS, otherwise they are skipped. Skipped pages
  * are stil counted in |mapped|. On failure some pages may still be mapped,
  * the number of which will be reported in |mapped|. */
+#[allow(dead_code)]
 #[derive(PartialEq)]
 pub enum ExistingEntryAction {
     Skip,
@@ -169,51 +171,26 @@ impl VmAspace {
             return Ok(0);
         }
 
-        let mut total_mapped = 0;
         let mut v = vaddr;
         let prot = PAGE_KERNEL;
         for idx in 0..count {
             let paddr = phys[idx];
             ZX_ASSERT!(IS_PAGE_ALIGNED!(paddr));
-            match self.map_pages(v, paddr, PAGE_SIZE, prot, self.vaddr_base) {
-                Ok(ret) => {
-                    total_mapped += ret / PAGE_SIZE;
-                },
-                Err(e) => {
-                    if e != ErrNO::AlreadyExists || action == ExistingEntryAction::Error {
+            if let Err(e) = map_pages(v, paddr, PAGE_SIZE, prot,
+                                      self.vaddr_base,
+                                      self.top_size_shift,
+                                      self.top_index_shift) {
+                if e != ErrNO::AlreadyExists ||
+                    action == ExistingEntryAction::Error {
                         return Err(e);
-                    }
-                },
-            }
+                }
+            };
             //MarkAspaceModified();
 
             v += PAGE_SIZE;
         }
 
-        todo!("map!");
         Ok(count)
-    }
-
-    fn map_pages(&self, vaddr: vaddr_t, paddr: paddr_t, size: usize,
-                 prot: prot_t, vaddr_base: vaddr_t) -> Result<usize, ErrNO> {
-        let vaddr_rel = vaddr - vaddr_base;
-        let vaddr_rel_max = 1 << self.top_size_shift;
-
-        dprintf!(INFO, "vaddr {:x}, paddr {:x}, size {:x}, prot {:x}\n",
-                 vaddr, paddr, size, prot);
-
-        if vaddr_rel > vaddr_rel_max - size || size > vaddr_rel_max {
-            return Err(ErrNO::InvalidArgs);
-        }
-
-        self.map_page_table(vaddr, vaddr_rel, paddr, size, prot,
-                            self.top_index_shift)
-    }
-
-    fn map_page_table(&self, vaddr: vaddr_t, vaddr_rel: vaddr_t,
-                      paddr: paddr_t, size: usize, prot: prot_t,
-                      index_shift: usize) -> Result<usize, ErrNO> {
-        Ok(0)
     }
 }
 

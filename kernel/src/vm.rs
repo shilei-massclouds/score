@@ -16,7 +16,7 @@ use crate::vm_page_state;
 
 #[allow(dead_code)]
 pub const ARCH_MMU_FLAG_CACHED:         usize = 0 << 0;
-pub const ARCH_MMU_FLAG_PERM_USER:      usize = 1 << 2;
+pub const _ARCH_MMU_FLAG_PERM_USER:      usize = 1 << 2;
 pub const ARCH_MMU_FLAG_PERM_READ:      usize = 1 << 3;
 pub const ARCH_MMU_FLAG_PERM_WRITE:     usize = 1 << 4;
 pub const ARCH_MMU_FLAG_PERM_EXECUTE:   usize = 1 << 5;
