@@ -12,10 +12,11 @@ use crate::types::*;
 use crate::ZX_ASSERT;
 use crate::config_generated::*;
 
-pub const CHAR_BITS: usize = 8;
+pub const BYTE_BITS: usize = 8;
 
 pub const PAGE_SHIFT    : usize = _CONFIG_PAGE_SHIFT;
 pub const PAGE_SIZE     : usize = 1 << PAGE_SHIFT;
+pub const PAGE_MASK     : usize = !(PAGE_SIZE - 1);
 pub const KERNEL_BASE   : usize = _CONFIG_KERNEL_BASE;
 
 pub const ARCH_PHYSMAP_SIZE: usize = _CONFIG_ARCH_PHYSMAP_SIZE;

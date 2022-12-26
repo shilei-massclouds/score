@@ -8,6 +8,9 @@
 
 use crate::arch::mmu::MMU_KERNEL_TOP_SHIFT;
 use crate::arch::mmu::PAGE_KERNEL;
+use crate::arch::mmu::PageTable;
+use crate::arch::mmu::_swapper_pgd;
+use crate::arch::tlbflush::local_flush_tlb_all;
 use crate::types::*;
 use alloc::vec::Vec;
 use spin::Mutex;
@@ -94,13 +97,6 @@ pub struct VmAspace {
     as_type: VmAspaceType,
     base: vaddr_t,
     size: usize,
-
-    /* Once-computed page shift constants */
-    vaddr_base: vaddr_t,        /* Offset that should be applied to
-                                   address to compute PTE indices. */
-    top_size_shift: usize,      /* Log2 of aspace size. */
-    top_index_shift: usize,     /* Log2 top level shift. */
-
     root_vmar: Option<VmAddressRegion>,
 }
 
@@ -112,9 +108,6 @@ impl VmAspace {
             as_type,
             base,
             size,
-            vaddr_base: KERNEL_ASPACE_BASE,
-            top_size_shift: KERNEL_ASPACE_BITS,
-            top_index_shift: MMU_KERNEL_TOP_SHIFT,
             root_vmar: None,
         }
     }
@@ -145,8 +138,6 @@ impl VmAspace {
                count: usize, mmu_flags: usize,
                action: ExistingEntryAction) -> Result<usize, ErrNO> {
 
-        //DEBUG_ASSERT(tt_virt_);
-
         if !self.is_valid_vaddr(vaddr) {
             return Err(ErrNO::OutOfRange);
         }
@@ -176,10 +167,7 @@ impl VmAspace {
         for idx in 0..count {
             let paddr = phys[idx];
             ZX_ASSERT!(IS_PAGE_ALIGNED!(paddr));
-            if let Err(e) = map_pages(v, paddr, PAGE_SIZE, prot,
-                                      self.vaddr_base,
-                                      self.top_size_shift,
-                                      self.top_index_shift) {
+            if let Err(e) = map_pages(v, paddr, PAGE_SIZE, prot) {
                 if e != ErrNO::AlreadyExists ||
                     action == ExistingEntryAction::Error {
                         return Err(e);
@@ -190,6 +178,29 @@ impl VmAspace {
             v += PAGE_SIZE;
         }
 
+        /* Tlb flush!!! We need tlb flush here?! */
+        /*
+        unsafe {
+            local_flush_tlb_all();
+        }
+        */
+
+        dprintf!(INFO, "######### table \n");
+        unsafe {
+            let pte = _swapper_pgd.item(0x1ff);
+            dprintf!(INFO, "######### root pte {:x}\n", pte);
+            let next_pt_pa = pte >> 10 << 12;
+            let next_pt_va = paddr_to_physmap(next_pt_pa);
+            let next_pt = next_pt_va as *mut PageTable;
+            dprintf!(INFO, "######### next {:x} -> {:x}, pte {:x}\n",
+                     next_pt_pa, next_pt_va, &(*next_pt).item(1));
+        }
+        dprintf!(INFO, "######### vaddr {:x}\n", vaddr);
+        unsafe {
+            let ptr = vaddr as *mut usize;
+            *ptr = 0;
+        }
+        dprintf!(INFO, "######### count {}\n", count);
         Ok(count)
     }
 }

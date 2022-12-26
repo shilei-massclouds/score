@@ -10,13 +10,14 @@ use alloc::alloc::{GlobalAlloc, Layout};
 use core::cmp::min;
 use core::ptr::null_mut;
 use spin::{Mutex, MutexGuard};
+use crate::klib::bitmap::Bitmap;
 use crate::vm_page_state::{self, *};
 use crate::defines::{_boot_heap, _boot_heap_end};
 use crate::ARCH_HEAP_ALIGN_BITS;
 use crate::aspace::{
     vm_get_kernel_heap_base, vm_get_kernel_heap_size, ExistingEntryAction
 };
-use crate::{ErrNO, PAGE_SHIFT, PAGE_SIZE, CHAR_BITS, ZX_ASSERT};
+use crate::{ErrNO, PAGE_SHIFT, PAGE_SIZE, BYTE_BITS, ZX_ASSERT};
 use crate::types::*;
 use crate::klib::list::{List, Linked};
 use crate::page::vm_page_t;
@@ -139,6 +140,7 @@ struct VirtualAlloc {
     allocated_page_state: vm_page_state_t,
     alloc_base: vaddr_t,
     align_log2: usize,
+    bitmap: Bitmap,
 }
 
 impl VirtualAlloc {
@@ -147,6 +149,7 @@ impl VirtualAlloc {
             allocated_page_state,
             alloc_base: 0,
             align_log2: 0,
+            bitmap: Bitmap::new(),
         }
     }
 
@@ -172,7 +175,7 @@ impl VirtualAlloc {
 
         /* Work how how many pages we need for the bitmap. */
         let total_pages = size / PAGE_SIZE;
-        let bits_per_page = PAGE_SIZE * CHAR_BITS;
+        let bits_per_page = PAGE_SIZE * BYTE_BITS;
         let bitmap_pages = ROUNDUP!(total_pages, bits_per_page) / bits_per_page;
 
         /* Validate that there will be anything left after allocating
@@ -188,21 +191,15 @@ impl VirtualAlloc {
         /* Allocate and map the bitmap pages into the start of the range
          * we were given. */
         self.alloc_map_pages(base, bitmap_pages)?;
+
+        self.bitmap.storage_init(base, bitmap_pages * PAGE_SIZE);
+
+        /* Initialize the bitmap, reserving its own pages. */
+        self.bitmap.init(total_pages);
+        self.bitmap.set(0, bitmap_pages);
+
         todo!("NOW!");
-        /*
-  bitmap_.StorageUnsafe()->Init(reinterpret_cast<void *>(base), bitmap_pages * PAGE_SIZE);
-
-  // Initialize the bitmap, reserving its own pages.
-  alloc_base_ = base;
-  bitmap_.Reset(total_pages);
-  bitmap_.Set(0, bitmap_pages);
-
-  // Set our first search to happen after the bitmap.
-  next_search_start_ = bitmap_pages;
-
-  alloc_guard_ = alloc_guard;
-  return ZX_OK;
-*/
+        Ok(())
     }
 
     fn alloc_map_pages(&self, va: vaddr_t, num_pages: usize)

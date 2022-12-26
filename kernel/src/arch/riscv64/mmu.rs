@@ -85,7 +85,7 @@ impl PageTable {
         (self.0[index] >> _PAGE_PFN_SHIFT) << PAGE_SHIFT
     }
 
-    fn item(&self, index: usize) -> usize {
+    pub fn item(&self, index: usize) -> usize {
         self.0[index]
     }
 }
@@ -174,7 +174,7 @@ macro_rules! LEVEL_SHIFT {
 
 macro_rules! LEVEL_SIZE {
     ($level: expr) => {
-        1 << LEVEL_SHIFT!($level)
+        1usize << LEVEL_SHIFT!($level)
     }
 }
 
@@ -199,7 +199,7 @@ macro_rules! PA_TO_PFN {
 #[allow(dead_code)]
 pub const MMU_KERNEL_SIZE_SHIFT: usize = KERNEL_ASPACE_BITS;
 
-pub const MMU_KERNEL_TOP_SHIFT: usize = LEVEL_SHIFT!(1);
+pub const MMU_KERNEL_TOP_SHIFT: usize = LEVEL_SHIFT!(0);
 
 fn vaddr_to_index(addr: usize, level: usize) -> usize {
     (addr >> LEVEL_SHIFT!(level)) & (PAGE_TABLE_ENTRIES - 1)
@@ -274,61 +274,51 @@ pub unsafe fn arch_zero_page(va: vaddr_t) {
     );
 }
 
-pub fn map_pages(vaddr: vaddr_t, paddr: paddr_t, size: usize,
-                 prot: prot_t, vaddr_base: vaddr_t,
-                 top_size_shift: usize,
-                 top_index_shift: usize)
+pub fn map_pages(vaddr: vaddr_t, paddr: paddr_t, size: usize, prot: prot_t)
     -> Result<usize, ErrNO> {
-    let vaddr_rel = vaddr - vaddr_base;
-    let vaddr_rel_max = 1 << top_size_shift;
-
     dprintf!(INFO, "vaddr {:x}, paddr {:x}, size {:x}, prot {:x}\n",
              vaddr, paddr, size, prot);
 
-    if vaddr_rel > vaddr_rel_max - size || size > vaddr_rel_max {
-        return Err(ErrNO::InvalidArgs);
-    }
-
     unsafe {
-        map_page_table(vaddr, vaddr_rel, paddr, size, prot, top_index_shift,
-                       &mut _swapper_pgd)
+        map_page_table(vaddr, paddr, size, prot, 0, &mut _swapper_pgd)
     }
 }
 
-pub fn map_page_table(mut vaddr: vaddr_t, mut vaddr_rel: vaddr_t,
-                      mut paddr: paddr_t, mut size: usize, prot: prot_t,
-                      index_shift: usize, page_table: &mut PageTable)
+pub fn map_page_table(mut vaddr: vaddr_t, mut paddr: paddr_t, mut size: usize,
+    prot: prot_t, level: usize, page_table: &mut PageTable)
     -> Result<usize, ErrNO> {
 
-    let block_size = 1 << index_shift;
-    let block_mask = block_size - 1;
-    dprintf!(INFO, "vaddr {:x}, vaddr_rel {:x}, paddr {:x}, size {:x}, \
-             prot {:x}, index shift {}\n",
-             vaddr, vaddr_rel, paddr, size, prot, index_shift);
+    let block_size = LEVEL_SIZE!(level);
+    let block_mask = !LEVEL_MASK!(level);
+    dprintf!(INFO, "vaddr {:x}, paddr {:x}, size {:x}, \
+             prot {:x}, index shift {}, level {}, index {:x} mask {:x} {:x}\n",
+             vaddr, paddr, size, prot, LEVEL_SHIFT!(level), level,
+             vaddr_to_index(vaddr, level), block_mask, block_size);
 
-    if ((vaddr_rel | paddr | size) & ((1 << PAGE_SHIFT) - 1)) != 0 {
+    if ((vaddr | paddr | size) & !PAGE_MASK) != 0 {
         return Err(ErrNO::InvalidArgs);
     }
 
     let mut mapped_size = 0;
     while size > 0 {
-        let vaddr_rem = vaddr_rel & block_mask;
-        let chunk_size = min(size, block_size - vaddr_rem);
-        let index = vaddr_rel >> index_shift;
+        let chunk_size = min(size, block_size);
+        let index = vaddr_to_index(vaddr, level);
         let pte = page_table.item(index);
 
         /* if we're at an unaligned address, not trying to map a block,
          * and not at the terminal level, recurse one more level of
          * the page table tree */
-        if ((vaddr_rel | paddr) & block_mask) != 0 ||
-            (chunk_size != block_size) ||
-            (index_shift > MMU_PTE_DESCRIPTOR_LEAF_MAX_SHIFT) {
+        if ((vaddr | paddr) & block_mask) != 0 || (chunk_size != block_size) ||
+            (LEVEL_SHIFT!(level) > MMU_PTE_DESCRIPTOR_LEAF_MAX_SHIFT) {
+
+            dprintf!(WARN, "### va {:x} pa {:x} chunk {:x}\n", vaddr, paddr, chunk_size);
+            dprintf!(WARN, "### {:x} {:x} {:x}\n",
+                (vaddr | paddr) & block_mask, block_size, LEVEL_SHIFT!(level));
 
             let next_pt: *mut PageTable;
             if page_table.item_present(index) {
                 if page_table.item_leaf(index) {
-                    dprintf!(WARN, "page table entry already in use, {:x}\n",
-                             pte);
+                    dprintf!(WARN, "page table entry already in use, {:x}\n", pte);
                     return Err(ErrNO::AlreadyExists);
                 } else {
                     next_pt = paddr_to_physmap(page_table.item_descend(index))
@@ -337,8 +327,6 @@ pub fn map_page_table(mut vaddr: vaddr_t, mut vaddr_rel: vaddr_t,
             } else {
                 let page_table_paddr = alloc_page_table()?;
                 let pt_vaddr = paddr_to_physmap(page_table_paddr);
-                dprintf!(INFO, "allocated page table, va {:x}, pa {:x}\n",
-                         pt_vaddr, page_table_paddr);
 
                 unsafe {
                     arch_zero_page(pt_vaddr);
@@ -348,12 +336,13 @@ pub fn map_page_table(mut vaddr: vaddr_t, mut vaddr_rel: vaddr_t,
                 page_table.mk_item(index, PA_TO_PFN!(page_table_paddr),
                                    PAGE_TABLE);
                 next_pt = pt_vaddr as *mut PageTable;
+                dprintf!(INFO, "allocated page table, va {:x}, pa {:x}, pte[{:x}] {:x}\n",
+                         pt_vaddr, page_table_paddr, index, page_table.item(index));
             }
 
             unsafe {
-                map_page_table(vaddr, vaddr_rem, paddr, chunk_size, prot,
-                               index_shift - (PAGE_SHIFT - 3),
-                               &mut (*next_pt))?;
+                map_page_table(vaddr, paddr, chunk_size, prot, level + 1,
+                    &mut (*next_pt))?;
             }
         } else {
             if page_table.item_present(index) {
@@ -362,11 +351,10 @@ pub fn map_page_table(mut vaddr: vaddr_t, mut vaddr_rel: vaddr_t,
             }
 
             page_table.mk_item(index, PA_TO_PFN!(paddr), prot);
-            dprintf!(INFO, "pte [{}] = {:x} (pa {:x})\n", index, pte, paddr);
+            dprintf!(INFO, "pte [{}] = {:x} (pa {:x})\n", index, prot, paddr);
         }
 
         vaddr += chunk_size;
-        vaddr_rel += chunk_size;
         paddr += chunk_size;
         size -= chunk_size;
         mapped_size += chunk_size;
