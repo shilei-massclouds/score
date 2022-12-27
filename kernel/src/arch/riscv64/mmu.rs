@@ -199,8 +199,6 @@ macro_rules! PA_TO_PFN {
 #[allow(dead_code)]
 pub const MMU_KERNEL_SIZE_SHIFT: usize = KERNEL_ASPACE_BITS;
 
-pub const MMU_KERNEL_TOP_SHIFT: usize = LEVEL_SHIFT!(0);
-
 fn vaddr_to_index(addr: usize, level: usize) -> usize {
     (addr >> LEVEL_SHIFT!(level)) & (PAGE_TABLE_ENTRIES - 1)
 }
@@ -263,10 +261,11 @@ fn _boot_map<F1, F2>(table: &mut PageTable, level: usize,
 pub unsafe fn arch_zero_page(va: vaddr_t) {
     asm!(
         "ble {1}, {0}, 2f
+         mv t0, {0}
         1:
-         sd zero, ({0})
-         add {0}, {0}, 8
-         blt {0}, {1}, 1b
+         sd zero, (t0)
+         add t0, t0, 8
+         blt t0, {1}, 1b
         2:",
 
         in(reg) va,
@@ -276,7 +275,7 @@ pub unsafe fn arch_zero_page(va: vaddr_t) {
 
 pub fn map_pages(vaddr: vaddr_t, paddr: paddr_t, size: usize, prot: prot_t)
     -> Result<usize, ErrNO> {
-    dprintf!(INFO, "vaddr {:x}, paddr {:x}, size {:x}, prot {:x}\n",
+    dprintf!(SPEW, "vaddr {:x}, paddr {:x}, size {:x}, prot {:x}\n",
              vaddr, paddr, size, prot);
 
     unsafe {
@@ -290,10 +289,6 @@ pub fn map_page_table(mut vaddr: vaddr_t, mut paddr: paddr_t, mut size: usize,
 
     let block_size = LEVEL_SIZE!(level);
     let block_mask = !LEVEL_MASK!(level);
-    dprintf!(INFO, "vaddr {:x}, paddr {:x}, size {:x}, \
-             prot {:x}, index shift {}, level {}, index {:x} mask {:x} {:x}\n",
-             vaddr, paddr, size, prot, LEVEL_SHIFT!(level), level,
-             vaddr_to_index(vaddr, level), block_mask, block_size);
 
     if ((vaddr | paddr | size) & !PAGE_MASK) != 0 {
         return Err(ErrNO::InvalidArgs);
@@ -310,10 +305,6 @@ pub fn map_page_table(mut vaddr: vaddr_t, mut paddr: paddr_t, mut size: usize,
          * the page table tree */
         if ((vaddr | paddr) & block_mask) != 0 || (chunk_size != block_size) ||
             (LEVEL_SHIFT!(level) > MMU_PTE_DESCRIPTOR_LEAF_MAX_SHIFT) {
-
-            dprintf!(WARN, "### va {:x} pa {:x} chunk {:x}\n", vaddr, paddr, chunk_size);
-            dprintf!(WARN, "### {:x} {:x} {:x}\n",
-                (vaddr | paddr) & block_mask, block_size, LEVEL_SHIFT!(level));
 
             let next_pt: *mut PageTable;
             if page_table.item_present(index) {
@@ -336,8 +327,7 @@ pub fn map_page_table(mut vaddr: vaddr_t, mut paddr: paddr_t, mut size: usize,
                 page_table.mk_item(index, PA_TO_PFN!(page_table_paddr),
                                    PAGE_TABLE);
                 next_pt = pt_vaddr as *mut PageTable;
-                dprintf!(INFO, "allocated page table, va {:x}, pa {:x}, pte[{:x}] {:x}\n",
-                         pt_vaddr, page_table_paddr, index, page_table.item(index));
+                dprintf!(SPEW, "allocated page table {:x}\n", next_pt as usize);
             }
 
             unsafe {
@@ -351,7 +341,7 @@ pub fn map_page_table(mut vaddr: vaddr_t, mut paddr: paddr_t, mut size: usize,
             }
 
             page_table.mk_item(index, PA_TO_PFN!(paddr), prot);
-            dprintf!(INFO, "pte [{}] = {:x} (pa {:x})\n", index, prot, paddr);
+            dprintf!(SPEW, "pte [{}] = {:x} (pa {:x})\n", index, prot, paddr);
         }
 
         vaddr += chunk_size;

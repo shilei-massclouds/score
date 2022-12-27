@@ -16,6 +16,7 @@ pub enum ErrNO {
 
     NotFound,
     NotSupported,
+    NoResources,
     AlreadyExists,
 
     InvalidArgs,

@@ -6,14 +6,10 @@
  * at https://opensource.org/licenses/MIT
  */
 
-use crate::arch::mmu::MMU_KERNEL_TOP_SHIFT;
+use crate::BOOT_CONTEXT;
 use crate::arch::mmu::PAGE_KERNEL;
-use crate::arch::mmu::PageTable;
-use crate::arch::mmu::_swapper_pgd;
-use crate::arch::tlbflush::local_flush_tlb_all;
 use crate::types::*;
 use alloc::vec::Vec;
-use spin::Mutex;
 use core::cmp::max;
 use crate::defines::*;
 use crate::debug::*;
@@ -57,7 +53,7 @@ pub enum VmAspaceType {
     GuestPhysical,
 }
 
-struct VmAspaceList {
+pub struct VmAspaceList {
     inner: Vec<VmAspace>,
 }
 
@@ -72,8 +68,12 @@ impl VmAspaceList {
         self.inner.push(aspace);
     }
 
-    fn get_aspace_by_id(&mut self, id: usize) -> &mut VmAspace {
+    pub fn get_aspace_by_id(&mut self, id: usize) -> &mut VmAspace {
         &mut self.inner[id]
+    }
+
+    pub fn _kernel_aspace(&mut self) -> &mut VmAspace {
+        self.get_aspace_by_id(0)
     }
 }
 
@@ -185,22 +185,6 @@ impl VmAspace {
         }
         */
 
-        dprintf!(INFO, "######### table \n");
-        unsafe {
-            let pte = _swapper_pgd.item(0x1ff);
-            dprintf!(INFO, "######### root pte {:x}\n", pte);
-            let next_pt_pa = pte >> 10 << 12;
-            let next_pt_va = paddr_to_physmap(next_pt_pa);
-            let next_pt = next_pt_va as *mut PageTable;
-            dprintf!(INFO, "######### next {:x} -> {:x}, pte {:x}\n",
-                     next_pt_pa, next_pt_va, &(*next_pt).item(1));
-        }
-        dprintf!(INFO, "######### vaddr {:x}\n", vaddr);
-        unsafe {
-            let ptr = vaddr as *mut usize;
-            *ptr = 0;
-        }
-        dprintf!(INFO, "######### count {}\n", count);
         Ok(count)
     }
 }
@@ -349,35 +333,6 @@ impl VmAddressRegion {
 
 }
 
-pub struct BootContext {
-    vm_aspace_list: Option<VmAspaceList>,
-    kernel_heap_base: usize,
-    kernel_heap_size: usize,
-}
-
-impl BootContext {
-    const fn new() -> Self {
-        Self {
-            vm_aspace_list: None,
-            kernel_heap_base: 0,
-            kernel_heap_size: 0,
-        }
-    }
-
-    fn get_aspace_by_id(&mut self, id: usize) -> &mut VmAspace {
-        if let Some(aspaces) = &mut self.vm_aspace_list {
-            return aspaces.get_aspace_by_id(id);
-        }
-        panic!("NOT init aspaces yet!");
-    }
-
-    pub fn kernel_aspace(&mut self) -> &mut VmAspace {
-        self.get_aspace_by_id(0)
-    }
-}
-
-pub static BOOT_CONTEXT: Mutex<BootContext> = Mutex::new(BootContext::new());
-
 pub fn vm_init_preheap() -> Result<(), ErrNO> {
     /* allow the vmm a shot at initializing some of its data structures */
     kernel_aspace_init_preheap()?;
@@ -416,7 +371,10 @@ fn vm_init_preheap_vmars() {
     let mut kernel_physmap_vmar= VmAddressRegion::new();
     kernel_physmap_vmar.init(PHYSMAP_BASE, PHYSMAP_SIZE, flags);
 
-    let mut ctx = BOOT_CONTEXT.lock();
+    let mut ctx;
+    unsafe {
+        ctx = &mut (*BOOT_CONTEXT.data.get());
+    }
     let kernel_aspace = ctx.get_aspace_by_id(0);
     let root_vmar = kernel_aspace.get_root_vmar();
 
@@ -482,7 +440,9 @@ fn kernel_aspace_init_preheap() -> Result<(), ErrNO> {
 
     let mut aspaces = VmAspaceList::new();
     aspaces.push(kernel_aspace);
-    BOOT_CONTEXT.lock().vm_aspace_list = Some(aspaces);
+    unsafe {
+        (*BOOT_CONTEXT.data.get()).vm_aspace_list = Some(aspaces);
+    }
     dprintf!(INFO, "kernel_aspace_init_preheap ok!\n");
 
     Ok(())
@@ -490,9 +450,13 @@ fn kernel_aspace_init_preheap() -> Result<(), ErrNO> {
 
 /* Request the heap dimensions. */
 pub fn vm_get_kernel_heap_base() -> usize {
-    BOOT_CONTEXT.lock().kernel_heap_base
+    unsafe {
+        (*BOOT_CONTEXT.data.get()).kernel_heap_base
+    }
 }
 
 pub fn vm_get_kernel_heap_size() -> usize {
-    BOOT_CONTEXT.lock().kernel_heap_size
+    unsafe {
+        (*BOOT_CONTEXT.data.get()).kernel_heap_size
+    }
 }

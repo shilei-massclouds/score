@@ -6,13 +6,13 @@
  * at https://opensource.org/licenses/MIT
  */
 
-use core::ptr::{slice_from_raw_parts, NonNull, slice_from_raw_parts_mut, self};
+use core::{ptr::NonNull, cmp};
 
-use crate::{types::vaddr_t, errors::ErrNO, defines::BYTE_BITS};
+use crate::{types::vaddr_t, errors::ErrNO, defines::{BYTE_BITS, BYTES_PER_USIZE}};
 
 pub struct Bitmap {
     size: usize,
-    storage_size: usize,    /* units of usize */
+    storage_num: usize,    /* units of storage */
     storage_data: NonNull<usize>,
 }
 
@@ -20,18 +20,26 @@ impl Bitmap {
     pub const fn new() -> Self {
         Self {
             size: 0,
-            storage_size: 0,
+            storage_num: 0,
             storage_data: NonNull::<usize>::dangling(),
         }
     }
 
     pub fn storage_init(&mut self, base: vaddr_t, size: usize) {
-        self.storage_size = size / 8;
+        self.storage_num = size / BYTES_PER_USIZE;
         self.storage_data = NonNull::new(base as *mut usize).unwrap();
+    }
+
+    pub fn storage_num(&self) -> usize {
+        self.storage_num
     }
 
     pub fn init(&mut self, size: usize) {
         self.size = size;
+    }
+
+    pub fn size(&self) -> usize {
+        self.size
     }
 
     pub fn set(&mut self, bitoff: usize, bitmax: usize) -> Result<(), ErrNO> {
@@ -50,7 +58,57 @@ impl Bitmap {
                     get_mask(i == first_idx, i == last_idx, bitoff, bitmax);
             }
         }
+
         Ok(())
+    }
+
+    fn _storage_unit_ptr(&self, idx: usize) -> *mut usize {
+        unsafe {
+            self.storage_data.as_ptr().offset(idx as isize)
+        }
+    }
+
+    fn storage_unit_ref(&self, idx: usize) -> usize {
+        unsafe {
+            *self.storage_data.as_ptr().offset(idx as isize)
+        }
+    }
+
+    pub fn find(&self, is_set: bool, mut bitoff: usize, bitmax: usize,
+        run_len: usize) -> Result<usize, ErrNO> {
+        if bitmax <= bitoff {
+            return Err(ErrNO::InvalidArgs);
+        }
+
+        let mut start = bitoff;
+        loop {
+            if self.scan(bitoff, bitmax, !is_set, &mut start) {
+                return Err(ErrNO::NoResources);
+            }
+            if bitmax - start < run_len {
+                return Err(ErrNO::NoResources);
+            }
+            if self.scan(start, start + run_len, is_set, &mut bitoff) {
+                return Ok(start);
+            }
+        }
+    }
+
+    fn scan(&self, bitoff: usize, mut bitmax: usize, is_set: bool,
+        out: &mut usize) -> bool {
+        bitmax = cmp::min(bitmax, self.size);
+        if bitoff >= bitmax {
+            return true;
+        }
+        for i in first_idx(bitoff)..last_idx(bitmax) {
+            let data = self.storage_unit_ref(i);
+            let masked = mask_bits(data, i, bitoff, bitmax, is_set);
+            if masked != 0 {
+                *out = i * BITMAP_UNIT_BITS + masked.trailing_zeros() as usize;
+                return false;
+            }
+        }
+        return true;
     }
 }
 
@@ -92,4 +150,20 @@ fn get_mask(first: bool, last: bool, off: usize, max: usize) -> usize {
     }
 
     mask
+}
+
+/* Applies a bitmask to the given data value. The result value has bits set
+ * which fall within the mask but do not match is_set. */
+fn mask_bits(data: usize, idx: usize, bitoff: usize, bitmax: usize, is_set: bool) -> usize {
+    let mask = get_mask(idx == first_idx(bitoff), idx == last_idx(bitmax),
+        bitoff, bitmax);
+    if is_set {
+        /* If is_set=true, invert the mask, OR it with the value,
+         * and invert it again to hopefully get all zeros. */
+        !(!mask | data)
+    } else {
+        /* If is_set=false, just AND the mask with the value to
+         * hopefully get all zeros. */
+        mask & data
+  }
 }

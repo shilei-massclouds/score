@@ -6,13 +6,15 @@
  * at https://opensource.org/licenses/MIT
  */
 
+use crate::{debug::*, BOOT_CONTEXT};
+use crate::klib::cmpctmalloc::cmpct_init;
 use alloc::alloc::{GlobalAlloc, Layout};
 use core::cmp::min;
 use core::ptr::null_mut;
 use spin::{Mutex, MutexGuard};
 use crate::klib::bitmap::Bitmap;
 use crate::vm_page_state::{self, *};
-use crate::defines::{_boot_heap, _boot_heap_end};
+use crate::defines::{_boot_heap, _boot_heap_end, BYTES_PER_USIZE};
 use crate::ARCH_HEAP_ALIGN_BITS;
 use crate::aspace::{
     vm_get_kernel_heap_base, vm_get_kernel_heap_size, ExistingEntryAction
@@ -22,7 +24,6 @@ use crate::types::*;
 use crate::klib::list::{List, Linked};
 use crate::page::vm_page_t;
 use crate::pmm::{pmm_alloc_pages, pmm_alloc_contiguous};
-use crate::aspace::BOOT_CONTEXT;
 use crate::vm::{
     ARCH_MMU_FLAG_CACHED, ARCH_MMU_FLAG_PERM_READ, ARCH_MMU_FLAG_PERM_WRITE
 };
@@ -136,9 +137,16 @@ pub fn boot_heap_mark_pages_in_use() {
  * for allocating any intermediate page tables. */
 
 /* This class is thread-unsafe. */
-struct VirtualAlloc {
+pub struct VirtualAlloc {
     allocated_page_state: vm_page_state_t,
+
+    /* Record of that padding to be applied to every allocation. */
+    alloc_guard: usize,
+
     alloc_base: vaddr_t,
+    /* Heuristic used to attempt to begin searching
+     * for a free run in bitmap_ at an optimal point. */
+    next_search_start: usize,
     align_log2: usize,
     bitmap: Bitmap,
 }
@@ -147,7 +155,9 @@ impl VirtualAlloc {
     const fn new(allocated_page_state: vm_page_state_t) -> Self {
         Self {
             allocated_page_state,
+            alloc_guard: 0,
             alloc_base: 0,
+            next_search_start: 0,
             align_log2: 0,
             bitmap: Bitmap::new(),
         }
@@ -195,10 +205,15 @@ impl VirtualAlloc {
         self.bitmap.storage_init(base, bitmap_pages * PAGE_SIZE);
 
         /* Initialize the bitmap, reserving its own pages. */
+        self.alloc_base = base;
         self.bitmap.init(total_pages);
-        self.bitmap.set(0, bitmap_pages);
+        self.bitmap.set(0, bitmap_pages)?;
 
-        todo!("NOW!");
+        /* Set our first search to happen after the bitmap. */
+        self.next_search_start = bitmap_pages;
+
+        self.alloc_guard = alloc_guard;
+
         Ok(())
     }
 
@@ -271,37 +286,112 @@ impl VirtualAlloc {
                 }
             }
 
-            let mapped = BOOT_CONTEXT.lock().kernel_aspace().map(
-                va + mapped_count * PAGE_SIZE, &paddrs[..], map_pages,
-                mmu_flags, ExistingEntryAction::Error)?;
+            unsafe {
+                let mapped = (*BOOT_CONTEXT.data.get()).get_aspace_by_id(0).map(
+                    va + mapped_count * PAGE_SIZE, &paddrs[..], map_pages,
+                    mmu_flags, ExistingEntryAction::Error)?;
+                ZX_ASSERT!(mapped == map_pages);
+            }
 
-            ZX_ASSERT!(mapped == map_pages);
             mapped_count += map_pages;
         }
 
         Ok(())
     }
+
+    pub fn alloc_pages(&mut self, pages: usize) -> Result<vaddr_t, ErrNO> {
+        if self.alloc_base == 0 {
+            return Err(ErrNO::BadState);
+        }
+
+        if pages == 0 {
+            return Err(ErrNO::InvalidArgs);
+        }
+
+        /* Allocate space from the bitmap, it will set the bits and
+         * ensure padding is left around the allocation. */
+        let start = self.bitmap_alloc(pages)?;
+
+        /* Turn the bitmap index into a virtual address and
+         * allocate the pages there. */
+        let vstart = self.alloc_base + start * PAGE_SIZE;
+        self.alloc_map_pages(vstart, pages)?;
+
+        Ok(vstart)
+    }
+
+    fn bitmap_alloc(&mut self, num_pages: usize) -> Result<vaddr_t, ErrNO> {
+        /* First search from our saved recommended starting location. */
+        let ret = self.bitmap_alloc_range(num_pages,
+            self.next_search_start, self.bitmap.size());
+        ret.or_else(
+            /* Try again from the beginning (skipping the bitmap itself).
+             * Still search to the end just in case the original search start was
+             * in the middle of a free run. */
+            |_| self.bitmap_alloc_range(num_pages,
+                self.bitmap_pages(), self.bitmap.size())
+        )
+    }
+
+    fn bitmap_alloc_range(&mut self, num_pages: usize, start: usize, end: usize)
+        -> Result<vaddr_t, ErrNO> {
+        ZX_ASSERT!(end >= start);
+        ZX_ASSERT!(num_pages > 0);
+        let align_pages: usize = 1 << (self.align_log2 - PAGE_SHIFT);
+        /* Want to find a run of num_pages + padding on either end.
+         * By over-searching we can ensure there is always
+         * alloc_guard_ unused pages / unset-bits between each allocation. */
+        let find_pages: usize = num_pages + self.alloc_guard * 2;
+
+        /* If requested less pages than the alignment then do not bother
+         * finding an aligned range, just find anything.
+         * The assumption here is that the block of pages we map in later
+         * will not be large enough to benefit from any alignment,
+         * so might as well avoid fragmentation and do a more efficient search. */
+        if num_pages >= align_pages && align_pages > 1 {
+            todo!("num_pages >= align_pages && align_pages > 1");
+        }
+
+        /* See if there's an unaligned range that will satisfy. */
+        let mut alloc_start = self.bitmap.find(false, start, end, find_pages)?;
+
+        /* Increase our start to skip the padding we want to leave. */
+        alloc_start += self.alloc_guard;
+        /* Record the end of this allocation as our next search start.
+         * We set the end to not include the padding so that the padding
+         * at the end of this allocation becomes the padding at the start
+         * of the next one. */
+        self.next_search_start = alloc_start + num_pages;
+        /* Set the bits for the 'inner' allocation,
+         * leaving the padding we found unset. */
+        self.bitmap.set(alloc_start, alloc_start + num_pages)?;
+
+        Ok(alloc_start)
+    }
+
+    pub fn bitmap_pages(&self) -> usize {
+        self.bitmap.storage_num() * BYTES_PER_USIZE / PAGE_SIZE
+    }
+
 }
 
-static VIRTUAL_ALLOC: Mutex<VirtualAlloc> =
-    Mutex::new(VirtualAlloc::new(vm_page_state::HEAP));
-
 pub fn heap_init() -> Result<(), ErrNO> {
-    let mut virtual_alloc = VIRTUAL_ALLOC.lock();
+    let mut virtual_alloc =
+        VirtualAlloc::new(vm_page_state::HEAP);
+
     virtual_alloc.init(vm_get_kernel_heap_base(), vm_get_kernel_heap_size(),
                        1, ARCH_HEAP_ALIGN_BITS)?;
 
-    /*
-    dprintf!(INFO, "Kernel heap [{:x}, {:x}) "
-             "using {} pages ({} KiB) for tracking bitmap\n",
+    dprintf!(INFO, "Kernel heap [{:x}, {:x}) using {} pages ({} KiB) \
+             for tracking bitmap\n",
              vm_get_kernel_heap_base(),
              vm_get_kernel_heap_base() + vm_get_kernel_heap_size(),
-             virtual_alloc.DebugBitmapPages(),
-             virtual_alloc.DebugBitmapPages() * PAGE_SIZE / 1024);
-             */
-    Ok(())
+             virtual_alloc.bitmap_pages(),
+             virtual_alloc.bitmap_pages() * PAGE_SIZE / 1024);
 
-    /*
-  cmpct_init();
-  */
+    unsafe {
+        (*BOOT_CONTEXT.data.get()).virtual_alloc = Some(virtual_alloc);
+    }
+
+    cmpct_init()
 }

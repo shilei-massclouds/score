@@ -42,6 +42,11 @@ impl ListNode {
         ListNode {next: None, prev: None}
     }
 
+    pub fn init(&mut self) {
+        self.next = None;
+        self.prev = None;
+    }
+
     pub fn delete_from_list(&mut self) {
         if self.prev.is_none() || self.next.is_none() {
             return;

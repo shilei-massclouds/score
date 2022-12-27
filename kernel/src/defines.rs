@@ -13,6 +13,7 @@ use crate::ZX_ASSERT;
 use crate::config_generated::*;
 
 pub const BYTE_BITS: usize = 8;
+pub const BYTES_PER_USIZE: usize = (usize::BITS / u8::BITS) as usize;
 
 pub const PAGE_SHIFT    : usize = _CONFIG_PAGE_SHIFT;
 pub const PAGE_SIZE     : usize = 1 << PAGE_SHIFT;

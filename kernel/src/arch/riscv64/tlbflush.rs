@@ -6,6 +6,8 @@
  * at https://opensource.org/licenses/MIT
  */
 
+#![allow(dead_code)]
+
 use core::arch::asm;
 
 pub unsafe fn local_flush_tlb_all() {

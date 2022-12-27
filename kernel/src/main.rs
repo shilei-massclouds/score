@@ -13,6 +13,10 @@
 #![feature(const_nonnull_new)]
 
 use core::arch::global_asm;
+use core::cell::UnsafeCell;
+use allocator::VirtualAlloc;
+use aspace::{VmAspaceList, VmAspace};
+
 use crate::debug::*;
 use crate::allocator::boot_heap_earliest_init;
 use crate::errors::ErrNO;
@@ -55,6 +59,72 @@ mod page;
 mod vm_page_state;
 mod aspace;
 mod vm;
+
+pub struct BootContext {
+    vm_aspace_list: Option<VmAspaceList>,
+    kernel_heap_base: usize,
+    kernel_heap_size: usize,
+    virtual_alloc: Option<VirtualAlloc>,
+}
+
+impl BootContext {
+    const fn _new() -> Self {
+        Self {
+            vm_aspace_list: None,
+            kernel_heap_base: 0,
+            kernel_heap_size: 0,
+            virtual_alloc: None,
+        }
+    }
+
+    fn get_aspace_by_id(&mut self, id: usize) -> &mut VmAspace {
+        if let Some(aspaces) = &mut self.vm_aspace_list {
+            return aspaces.get_aspace_by_id(id);
+        }
+        panic!("NOT init aspaces yet!");
+    }
+}
+
+pub struct WrapBootContext {
+    data: UnsafeCell<BootContext>,
+}
+
+unsafe impl Sync for WrapBootContext {}
+unsafe impl Send for WrapBootContext {}
+
+impl WrapBootContext {
+    pub const fn new() -> Self {
+        Self {
+            data: UnsafeCell::new(BootContext::_new()),
+        }
+    }
+}
+
+pub static BOOT_CONTEXT: WrapBootContext = WrapBootContext::new();
+
+/*
+
+impl<T> Wrap<T> {
+    pub const fn new() -> Self {
+        Self {
+            phantom: PhantomData,
+            data: None,
+        }
+    }
+
+    pub fn init(&mut self, data: T) {
+        self.data = Some(UnsafeCell::new(data));
+    }
+
+    pub const fn get(&self) -> *mut T {
+        if let Some(data) = &self.data {
+            data.get()
+        } else {
+            panic!("Fatal: Null!");
+        }
+    }
+}
+*/
 
 #[no_mangle]
 fn lk_main() -> ! {
