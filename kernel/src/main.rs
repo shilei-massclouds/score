@@ -22,7 +22,7 @@ use crate::debug::*;
 use crate::allocator::boot_heap_earliest_init;
 use crate::errors::ErrNO;
 use crate::defines::*;
-use crate::klib::cmpctmalloc::cmpct_alloc;
+use crate::klib::cmpctmalloc::{cmpct_alloc, cmpct_free};
 use crate::platform::platform_early_init;
 use crate::pmm::PMM_NODE;
 use crate::aspace::vm_init_preheap;
@@ -215,6 +215,8 @@ fn _lk_main() -> Result<(), ErrNO> {
         *dw0 = 0x1234;
         dprintf!(INFO, "ret after: {:x}\n", *dw0);
     }
+
+    cmpct_free(ret);
     dprintf!(INFO, "#########\n");
     /*
     let mut list = List::<vm_page>::new();

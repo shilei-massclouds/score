@@ -413,3 +413,17 @@ fn find_nonempty_bucket(index: usize) -> Result<usize, ErrNO> {
     }
     Err(ErrNO::NotFound)
 }
+
+pub fn cmpct_free(payload: *mut u8) {
+    if payload == null_mut() {
+        return;
+    }
+
+    let header = payload as vaddr_t - SIZE_OF_HEADER_T;
+    let header = header as *mut header_t;
+    cmpct_free_internal(payload, header)
+}
+
+fn cmpct_free_internal(_payload: *mut u8, _header: *mut header_t) {
+    todo!("cmpct_free_internal!");
+}
