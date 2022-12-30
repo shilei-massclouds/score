@@ -12,10 +12,29 @@ use core::ptr::NonNull;
 use core::marker::PhantomData;
 use crate::ZX_ASSERT;
 
+#[macro_export(local_inner_macros)]
+macro_rules! offset_of {
+    ($type:ty, $field:tt) => ({
+        let dummy = core::mem::MaybeUninit::<$type>::uninit();
+
+        let dummy_ptr = dummy.as_ptr();
+        let member_ptr = core::ptr::addr_of!((*dummy_ptr).$field);
+
+        member_ptr as usize - dummy_ptr as usize
+    })
+}
+
+#[macro_export]
+macro_rules! container_of {
+	($ptr:expr, $type:path, $field:ident) => {
+		$ptr.cast::<u8>()
+			.sub($crate::offset_of!($type, $field))
+			.cast::<$type>()
+	};
+}
+
 pub trait Linked<T> {
-    fn from_node(ptr: NonNull<ListNode>) -> Option<NonNull<T>> {
-        NonNull::<T>::new(ptr.as_ptr() as *mut T)
-    }
+    fn from_node(ptr: NonNull<ListNode>) -> Option<NonNull<T>>;
 
     fn into_node(&mut self) -> &mut ListNode;
 

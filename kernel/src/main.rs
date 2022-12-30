@@ -16,11 +16,13 @@ use core::arch::global_asm;
 use core::cell::UnsafeCell;
 use allocator::VirtualAlloc;
 use aspace::{VmAspaceList, VmAspace};
+use klib::cmpctmalloc::Heap;
 
 use crate::debug::*;
 use crate::allocator::boot_heap_earliest_init;
 use crate::errors::ErrNO;
 use crate::defines::*;
+use crate::klib::cmpctmalloc::cmpct_alloc;
 use crate::platform::platform_early_init;
 use crate::pmm::PMM_NODE;
 use crate::aspace::vm_init_preheap;
@@ -65,6 +67,7 @@ pub struct BootContext {
     kernel_heap_base: usize,
     kernel_heap_size: usize,
     virtual_alloc: Option<VirtualAlloc>,
+    heap: Option<Heap>,
 }
 
 impl BootContext {
@@ -74,6 +77,7 @@ impl BootContext {
             kernel_heap_base: 0,
             kernel_heap_size: 0,
             virtual_alloc: None,
+            heap: None,
         }
     }
 
@@ -82,6 +86,13 @@ impl BootContext {
             return aspaces.get_aspace_by_id(id);
         }
         panic!("NOT init aspaces yet!");
+    }
+
+    fn get_heap(&mut self) -> &mut Heap {
+        if let Some(ret) = &mut self.heap {
+            return ret;
+        }
+        panic!("NOT init heap yet!");
     }
 }
 
@@ -98,33 +109,15 @@ impl WrapBootContext {
             data: UnsafeCell::new(BootContext::_new()),
         }
     }
+
+    fn get_heap(&self) -> &mut Heap {
+        unsafe {
+            (*self.data.get()).get_heap()
+        }
+    }
 }
 
 pub static BOOT_CONTEXT: WrapBootContext = WrapBootContext::new();
-
-/*
-
-impl<T> Wrap<T> {
-    pub const fn new() -> Self {
-        Self {
-            phantom: PhantomData,
-            data: None,
-        }
-    }
-
-    pub fn init(&mut self, data: T) {
-        self.data = Some(UnsafeCell::new(data));
-    }
-
-    pub const fn get(&self) -> *mut T {
-        if let Some(data) = &self.data {
-            data.get()
-        } else {
-            panic!("Fatal: Null!");
-        }
-    }
-}
-*/
 
 #[no_mangle]
 fn lk_main() -> ! {
@@ -212,6 +205,17 @@ fn _lk_main() -> Result<(), ErrNO> {
     ///////////////////////////
 
     println!("lk_main ...");
+
+    dprintf!(INFO, "#########\n");
+    let ret = cmpct_alloc(16);
+    dprintf!(INFO, "alloc 16: {:?}\n", ret);
+    let dw0 = ret as *mut usize;
+    unsafe {
+        dprintf!(INFO, "ret before: {:x}\n", *dw0);
+        *dw0 = 0x1234;
+        dprintf!(INFO, "ret after: {:x}\n", *dw0);
+    }
+    dprintf!(INFO, "#########\n");
     /*
     let mut list = List::<vm_page>::new();
     list.init();

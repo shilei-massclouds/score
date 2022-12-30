@@ -6,6 +6,7 @@
  * at https://opensource.org/licenses/MIT
  */
 
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU8, Ordering};
 use crate::types::*;
 use crate::klib::list::{Linked, ListNode};
@@ -39,6 +40,14 @@ pub struct vm_page {
 }
 
 impl Linked<vm_page> for vm_page {
+    fn from_node(ptr: NonNull<ListNode>) -> Option<NonNull<vm_page_t>> {
+        unsafe {
+            NonNull::<vm_page_t>::new(
+                crate::container_of!(ptr.as_ptr(), vm_page_t, queue_node)
+            )
+        }
+    }
+
     fn into_node(&mut self) -> &mut ListNode {
         &mut (self.queue_node)
     }

@@ -7,8 +7,9 @@
  */
 
 use core::mem;
-use core::ptr::NonNull;
+use core::ptr::{NonNull, null_mut};
 use crate::defines::BYTES_PER_USIZE;
+use crate::klib::memory::memset;
 use crate::{debug::*, BOOT_CONTEXT};
 use crate::types::vaddr_t;
 use crate::{errors::ErrNO, ZX_ASSERT, defines::{PAGE_SIZE, PAGE_SHIFT}};
@@ -66,20 +67,42 @@ const NUMBER_OF_BUCKETS: usize = 1 + 15 + (HEAP_ALLOC_VIRTUAL_BITS - 7) * 8;
 
 const BUCKET_WORDS: usize = ((NUMBER_OF_BUCKETS) + 31) >> 5;
 
+/* If a header's |flag| field has this bit set,
+ * it is free and lives in a free bucket. */
+const FREE_BIT: u32 = 1 << 0;
+
 #[allow(non_camel_case_types)]
 struct header_t {
-    /* linked node */
-    queue_node: ListNode,
-    size: usize,
+    /* Pointer to the previous area in memory order. */
+    left: Option<NonNull<header_t>>,
+    /* The size of the memory area in bytes, including this header.
+     * The right sentinel will have 0 in this field. */
+    size: u32,
+    /* The most bit is used to store extra state: see FREE_BIT. */
+    flag: u32,
 }
 
-impl Linked<header_t> for header_t {
+#[allow(non_camel_case_types)]
+struct free_t {
+    header: header_t,
+    queue_node: ListNode,   /* linked node */
+}
+
+impl Linked<free_t> for free_t {
+    fn from_node(ptr: NonNull<ListNode>) -> Option<NonNull<free_t>> {
+        unsafe {
+            NonNull::<free_t>::new(
+                crate::container_of!(ptr.as_ptr(), free_t, queue_node)
+            )
+        }
+    }
+
     fn into_node(&mut self) -> &mut ListNode {
         &mut (self.queue_node)
     }
 }
 
-struct Heap {
+pub struct Heap {
     /* Total bytes allocated from the OS for the heap. */
     size: usize,
 
@@ -93,14 +116,14 @@ struct Heap {
     //cached_os_alloc: NonNull<header_t>,
 
     /* Free lists, bucketed by size. See size_to_index_helper(). */
-    free_lists: [List<header_t>; NUMBER_OF_BUCKETS],
+    free_lists: [List<free_t>; NUMBER_OF_BUCKETS],
 
     /* Bitmask that tracks whether a given free_lists entry has any elements.
      * See set_free_list_bit(), clear_free_list_bit(). */
     free_list_bits: [u32; BUCKET_WORDS],
 }
 
-const EMPTY_LIST: List<header_t> = List::new();
+const EMPTY_LIST: List<free_t> = List::new();
 
 impl Heap {
     const fn new() -> Self {
@@ -118,7 +141,7 @@ impl Heap {
     }
 
     #[inline]
-    fn _clear_free_list_bit(&mut self, index: usize) {
+    fn clear_free_list_bit(&mut self, index: usize) {
         self.free_list_bits[index >> 5] &= !(1 << (31 - (index & 0x1f)));
     }
 }
@@ -127,6 +150,7 @@ unsafe impl Send for Heap {}
 unsafe impl Sync for Heap {}
 
 pub fn cmpct_init() -> Result<(), ErrNO> {
+    dprintf!(INFO, "cmpct_init ...\n");
     let mut heap: Heap = Heap::new();
 
     /* Initialize the free lists. */
@@ -134,14 +158,25 @@ pub fn cmpct_init() -> Result<(), ErrNO> {
         heap.free_lists[i].init();
     }
 
-    dprintf!(INFO, "cmpct_init ...\n");
-    heap_grow(&mut heap, HEAP_USABLE_GROW_SIZE)
+    unsafe {
+        (*BOOT_CONTEXT.data.get()).heap = Some(heap);
+    }
+    heap_grow(HEAP_USABLE_GROW_SIZE)
 }
+
+const SIZE_OF_HEADER_T: usize = mem::size_of::<header_t>();
+const SIZE_OF_FREE_T: usize = mem::size_of::<free_t>();
+
+// Factors in the header for an allocation. Value chosen here is hard coded and could be less than
+// the actual largest allocation that cmpct_alloc could provide. This is done so that larger buckets
+// can exist in order to allow the heap to grow by amounts larger than what we would like to allow
+// clients to allocate.
+const HEAP_MAX_ALLOC_SIZE: usize = (1 << 20) - SIZE_OF_HEADER_T;
 
 /* When the heap is grown the requested internal usable size will be increased
  * by this amount before allocating from the OS. This can be factored into
  * any heap_grow requested to precisely control the OS allocation amount. */
-const HEAP_GROW_OVER_HEAD: usize = mem::size_of::<header_t>() * 2;
+const HEAP_GROW_OVER_HEAD: usize = SIZE_OF_HEADER_T * 2;
 
 /* Precalculated version of HEAP_GROW_SIZE
  * that takes into account the grow overhead. */
@@ -149,7 +184,7 @@ const HEAP_USABLE_GROW_SIZE: usize = HEAP_GROW_SIZE - HEAP_GROW_OVER_HEAD;
 
 /* Create a new free-list entry of at least size bytes (including the
  * allocation header).  Called with the lock, apart from during init. */
-fn heap_grow(theheap: &mut Heap, mut size: usize) -> Result<(), ErrNO> {
+fn heap_grow(mut size: usize) -> Result<(), ErrNO> {
     /* This function accesses field members of header_t which are poisoned
      * so it has to be NO_ASAN.
      *
@@ -163,9 +198,9 @@ fn heap_grow(theheap: &mut Heap, mut size: usize) -> Result<(), ErrNO> {
     size = ROUNDUP!(size, PAGE_SIZE);
     let area = heap_page_alloc(size >> PAGE_SHIFT)?;
     dprintf!(INFO, "Growing heap by 0x{:x} bytes, new area {:x}\n", size, area);
-    theheap.size += size;
+    BOOT_CONTEXT.get_heap().size += size;
 
-    add_to_heap(theheap, area, size)
+    add_to_heap(area, size)
 }
 
 fn heap_page_alloc(pages: usize) -> Result<vaddr_t, ErrNO> {
@@ -183,43 +218,58 @@ fn heap_page_alloc(pages: usize) -> Result<vaddr_t, ErrNO> {
     }
 }
 
-fn create_allocation_header(va: vaddr_t, offset: usize, size: usize) -> vaddr_t {
+fn create_allocation_header(va: vaddr_t, offset: usize,
+        size: usize, left: Option<NonNull<header_t>>) -> vaddr_t {
+
     let ptr = (va + offset) as *mut header_t;
     unsafe {
-        (*ptr).queue_node.init();
-        (*ptr).size = size;
+        (*ptr).left = left;
+        (*ptr).size = size as u32;
     }
-    va + offset + mem::size_of::<header_t>()
+    va + offset + SIZE_OF_HEADER_T
 }
 
-fn add_to_heap(heap: &mut Heap, area: vaddr_t, size: usize) -> Result<(), ErrNO> {
+fn add_to_heap(area: vaddr_t, size: usize) -> Result<(), ErrNO> {
     /* Set up the left sentinel. Its |left| field will not have FREE_BIT set,
      * stopping attempts to coalesce left. */
-    let free_area = create_allocation_header(area, 0, 0);
+    let left = NonNull::new(area as *mut header_t);
+    let free_area = create_allocation_header(area, 0, SIZE_OF_HEADER_T, None);
 
     /* Set up the usable memory area, which will be marked free. */
-    let free_size = size - 2 * mem::size_of::<header_t>();
-    create_free_area(heap, free_area, free_size);
+    let free_header = NonNull::new(free_area as *mut header_t);
+    let free_size = size - 2 * SIZE_OF_HEADER_T;
+    create_free_area(free_area, left, free_size);
 
     /* Set up the right sentinel. Its |left| field will not have FREE_BIT bit set,
      * stopping attempts to coalesce right. */
-    let top = area + size - mem::size_of::<header_t>();
-    create_allocation_header(top, 0, 0);
+    let right = area + size - SIZE_OF_HEADER_T;
+    create_allocation_header(right, 0, 0, free_header);
     Ok(())
 }
 
-fn create_free_area(heap: &mut Heap, area: vaddr_t, size: usize) {
-    let mut ptr = NonNull::new(area as *mut header_t).unwrap();
+fn create_free_area(area: vaddr_t, left: Option<NonNull<header_t>>, size: usize) {
+    let mut ptr = NonNull::new(area as *mut free_t).unwrap();
     unsafe {
-        ptr.as_mut().size = size;
+        ptr.as_mut().queue_node.init();
+        ptr.as_mut().header.left = left;
+        ptr.as_mut().header.size = size as u32;
+        ptr.as_mut().header.flag = FREE_BIT;
     }
 
-    let index = size_to_index_freeing(size - mem::size_of::<header_t>());
+    let index = size_to_index_freeing(size - SIZE_OF_HEADER_T);
+
+    let heap = BOOT_CONTEXT.get_heap();
     heap.set_free_list_bit(index);
     heap.free_lists[index].add_head(ptr);
     heap.remaining += size;
     dprintf!(INFO, "create_free_area index 0x{:x}: limit 0x{:x}\n",
              index, NUMBER_OF_BUCKETS);
+}
+
+// Round up size to next bucket when allocating.
+fn size_to_index_allocating(size: usize) -> (usize, usize) {
+    let rounded = ROUNDUP!(size, 8);
+    size_to_index_helper(rounded, -8, 1)
 }
 
 /* Round down size to next bucket when freeing. */
@@ -230,7 +280,7 @@ fn size_to_index_freeing(size: usize) -> usize {
 
 /* Operates in sizes that don't include the allocation header;
  * i.e., the usable portion of a memory area. */
-fn size_to_index_helper(size: usize, adjust: usize, increment: usize) -> (usize, usize) {
+fn size_to_index_helper(size: usize, adjust: isize, increment: usize) -> (usize, usize) {
     /* First buckets are simply 8-spaced up to 128. */
     if size <= 128 {
         /* No allocation is smaller than 8 bytes, so the first bucket is for 8
@@ -245,7 +295,7 @@ fn size_to_index_helper(size: usize, adjust: usize, increment: usize) -> (usize,
      * but if we hit a bucket size exactly we don't want to go up.
      * By subtracting 8 here, we will do the right thing (the carry
      * propagates up for the round numbers we are interested in). */
-    let size = size + adjust;
+    let size = (size as isize + adjust) as usize;
     /* After 128 the buckets are logarithmically spaced, every 16 up to 256,
      * every 32 up to 512 etc.  This can be thought of as rows of 8 buckets.
      * GCC intrinsic count-leading-zeros.
@@ -264,4 +314,102 @@ fn size_to_index_helper(size: usize, adjust: usize, increment: usize) -> (usize,
     ZX_ASSERT!(answer < NUMBER_OF_BUCKETS);
 
     (answer, size)
+}
+
+pub fn cmpct_alloc(size: usize) -> *mut u8 {
+    if size == 0 {
+        return null_mut();
+    }
+
+    /* Large allocations are no longer allowed. */
+    if size > HEAP_MAX_ALLOC_SIZE {
+        return null_mut();
+    }
+
+    let alloc_size = size;
+
+    let (start_bucket, rounded_up) = size_to_index_allocating(size);
+
+    let rounded_up = rounded_up + SIZE_OF_HEADER_T;
+
+    let bucket;
+    match find_nonempty_bucket(start_bucket) {
+        Ok(ret) => {
+            bucket = ret;
+        },
+        Err(_) => {
+            todo!("when find_nonempty_bucket error!");
+        }
+    }
+
+    let heap = BOOT_CONTEXT.get_heap();
+
+    let mut head = heap.free_lists[bucket].head().unwrap();
+    let ptr_header = unsafe { &head.as_ref().header } as *const header_t;
+    let left_over = unsafe { head.as_ref().header.size as usize } - rounded_up;
+    // We can't carve off the rest for a new free space if it's smaller than the
+    // free-list linked structure.  We also don't carve it off if it's less than
+    // 1.6% the size of the allocation.  This is to avoid small long-lived
+    // allocations being placed right next to large allocations, hindering
+    // coalescing and returning pages to the OS.
+    if left_over >= SIZE_OF_FREE_T && left_over > (size >> 6) {
+        let right = right_header(ptr_header);
+        unlink_free(head, bucket);
+        let free = head.as_ptr() as usize + rounded_up;
+        let left = NonNull::new(ptr_header as *mut header_t);
+        create_free_area(free, left, left_over);
+        unsafe {
+            (*right).left = NonNull::new(free as *mut header_t);
+            head.as_mut().header.size -= left_over as u32;
+        }
+    } else {
+        unlink_free(head, bucket);
+    }
+
+    let ret;
+    unsafe {
+        ret = create_allocation_header(ptr_header as vaddr_t, 0,
+            (*ptr_header).size as usize, (*ptr_header).left);
+    }
+    memset(ret, 0, alloc_size);
+    ret as *mut u8
+}
+
+fn unlink_free(mut free_area: NonNull<free_t>, bucket: usize) {
+    let heap = BOOT_CONTEXT.get_heap();
+    unsafe {
+        ZX_ASSERT!(heap.remaining >= free_area.as_ref().header.size as usize);
+        heap.remaining -= free_area.as_ref().header.size as usize;
+        free_area.as_mut().delete_from_list();
+        free_area.as_mut().header.flag = 0;
+    }
+    if heap.free_lists[bucket].empty() {
+        heap.clear_free_list_bit(bucket);
+    }
+}
+
+fn right_header(header: *const header_t) -> *mut header_t {
+    unsafe {
+        (header as usize + (*header).size as usize) as *mut header_t
+    }
+}
+
+fn find_nonempty_bucket(index: usize) -> Result<usize, ErrNO> {
+    let heap = BOOT_CONTEXT.get_heap();
+
+    let mut mask = (1u32 << (31 - (index & 0x1f))) - 1;
+    mask = mask * 2 + 1;
+    mask &= heap.free_list_bits[index >> 5];
+    if mask != 0 {
+        return Ok((index & !0x1f) + mask.leading_zeros() as usize);
+    }
+    let start = ROUNDUP!(index +1 , 32) >> 5;
+    let end = NUMBER_OF_BUCKETS >> 5;
+    for i in start..end {
+        mask = heap.free_list_bits[i];
+        if mask != 0 {
+            return Ok(i + mask.leading_zeros() as usize);
+        }
+    }
+    Err(ErrNO::NotFound)
 }
