@@ -23,3 +23,8 @@ fn panic(info: &PanicInfo) -> ! {
 macro_rules! ZX_ASSERT {
     ($expr: expr) => (assert!($expr));
 }
+
+#[macro_export]
+macro_rules! ZX_ASSERT_MSG {
+    ($expr: expr, $($arg: tt)+) => (assert!($expr, $($arg)+));
+}

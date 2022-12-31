@@ -17,14 +17,13 @@ use core::cell::UnsafeCell;
 use allocator::VirtualAlloc;
 use aspace::{VmAspaceList, VmAspace};
 use klib::cmpctmalloc::Heap;
+use pmm::PmmNode;
 
 use crate::debug::*;
 use crate::allocator::boot_heap_earliest_init;
 use crate::errors::ErrNO;
 use crate::defines::*;
-use crate::klib::cmpctmalloc::{cmpct_alloc, cmpct_free};
 use crate::platform::platform_early_init;
-use crate::pmm::PMM_NODE;
 use crate::aspace::vm_init_preheap;
 use crate::klib::list::List;
 use crate::platform::RESERVED_PAGE_LIST;
@@ -49,6 +48,9 @@ mod debug;
 #[macro_use]
 mod stdio;
 
+#[cfg(feature = "unittest")]
+mod tests;
+
 mod panic;
 mod config_generated;
 mod types;
@@ -63,6 +65,7 @@ mod aspace;
 mod vm;
 
 pub struct BootContext {
+    pmm_node: Option<PmmNode>,
     vm_aspace_list: Option<VmAspaceList>,
     kernel_heap_base: usize,
     kernel_heap_size: usize,
@@ -73,6 +76,7 @@ pub struct BootContext {
 impl BootContext {
     const fn _new() -> Self {
         Self {
+            pmm_node: None,
             vm_aspace_list: None,
             kernel_heap_base: 0,
             kernel_heap_size: 0,
@@ -88,11 +92,36 @@ impl BootContext {
         panic!("NOT init aspaces yet!");
     }
 
-    fn get_heap(&mut self) -> &mut Heap {
+    fn kernel_aspace(&mut self) -> &mut VmAspace {
+        self.get_aspace_by_id(0)
+    }
+
+    fn heap(&mut self) -> &mut Heap {
         if let Some(ret) = &mut self.heap {
             return ret;
         }
         panic!("NOT init heap yet!");
+    }
+
+    fn virtual_alloc(&mut self) -> &mut VirtualAlloc {
+        if let Some(ret) = &mut self.virtual_alloc {
+            return ret;
+        }
+        panic!("NOT init virtual_alloc yet!");
+    }
+
+    fn pmm_node(&mut self) -> &mut PmmNode {
+        if let Some(ret) = &mut self.pmm_node {
+            return ret;
+        }
+        panic!("NOT init pmm node yet!");
+    }
+
+    fn aspaces(&mut self) -> &mut VmAspaceList {
+        if let Some(ret) = &mut self.vm_aspace_list {
+            return ret;
+        }
+        panic!("NOT init vm_aspaces_list yet!");
     }
 }
 
@@ -110,9 +139,33 @@ impl WrapBootContext {
         }
     }
 
-    fn get_heap(&self) -> &mut Heap {
+    fn heap(&self) -> &mut Heap {
         unsafe {
-            (*self.data.get()).get_heap()
+            (*self.data.get()).heap()
+        }
+    }
+
+    fn virtual_alloc(&self) -> &mut VirtualAlloc {
+        unsafe {
+            (*self.data.get()).virtual_alloc()
+        }
+    }
+
+    fn kernel_aspace(&self) -> &mut VmAspace {
+        unsafe {
+            (*self.data.get()).kernel_aspace()
+        }
+    }
+
+    fn pmm_node(&self) -> &mut PmmNode {
+        unsafe {
+            (*self.data.get()).pmm_node()
+        }
+    }
+
+    fn aspaces(&self) -> &mut VmAspaceList {
+        unsafe {
+            (*self.data.get()).aspaces()
         }
     }
 }
@@ -202,47 +255,13 @@ fn _lk_main() -> Result<(), ErrNO> {
     heap_init()?;
     // lk_primary_cpu_init_level(LK_INIT_LEVEL_HEAP, LK_INIT_LEVEL_VM - 1);
 
+    println!("lk_main ok!");
+
     ///////////////////////////
 
-    println!("lk_main ...");
-
-    dprintf!(INFO, "#########\n");
-    let ret = cmpct_alloc(16);
-    dprintf!(INFO, "alloc 16: {:?}\n", ret);
-    let dw0 = ret as *mut usize;
-    unsafe {
-        dprintf!(INFO, "ret before: {:x}\n", *dw0);
-        *dw0 = 0x1234;
-        dprintf!(INFO, "ret after: {:x}\n", *dw0);
-    }
-
-    cmpct_free(ret);
-    dprintf!(INFO, "#########\n");
-    /*
-    let mut list = List::<vm_page>::new();
-    list.init();
-    let mut page = vm_page::new();
-    page.init(0x1000);
-        dprintf!(INFO, "len {:x}\n", list.len());
-    list.add_tail((&mut page).into());
-        dprintf!(INFO, "len {:x}\n", list.len());
-    let mut page = vm_page::new();
-    page.init(0x2000);
-    list.add_tail((&mut page).into());
-    let mut page = vm_page::new();
-    page.init(0x3000);
-    list.add_head((&mut page).into());
-    if let Some(head) = list.head() {
-        unsafe {
-        dprintf!(INFO, "head {:?} {:x}\n", head, head.as_ref().paddr());
-        }
-    }
-
-    for page in list.iter() {
-    //for page in list.iter_mut() {
-        dprintf!(INFO, "page pa {:x}\n", page.paddr());
-    }
-    */
+    /* Do unit tests */
+    #[cfg(feature = "unittest")]
+    crate::tests::do_tests();
 
     Ok(())
 }
@@ -260,7 +279,11 @@ fn dlog_init_early() {
 
 /* deal with any static constructors */
 fn call_constructors() {
-    PMM_NODE.lock().init();
+    unsafe {
+        (*BOOT_CONTEXT.data.get()).pmm_node = Some(PmmNode::new());
+        let pmm_node = BOOT_CONTEXT.pmm_node();
+        pmm_node.init();
+    }
     RESERVED_PAGE_LIST.lock().init();
 }
 

@@ -82,6 +82,8 @@ pub fn mark_pages_in_use(pa: paddr_t, len: usize) {
 
     /* mark all of the pages we allocated as WIRED */
     for page in list.iter_mut() {
-        page.set_state(vm_page_state::WIRED);
+        unsafe {
+            (*page).set_state(vm_page_state::WIRED);
+        }
     }
 }

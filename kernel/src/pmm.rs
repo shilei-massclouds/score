@@ -7,14 +7,14 @@
  */
 
 use core::mem;
-use core::ptr::NonNull;
+use core::ptr::null_mut;
 use alloc::string::String;
+use crate::BOOT_CONTEXT;
 use crate::debug::*;
 use crate::ErrNO;
 use crate::klib::list::Linked;
 use crate::{print, dprintf, ZX_ASSERT};
 use crate::{PAGE_SIZE, PAGE_SHIFT, paddr_to_physmap};
-use spin::Mutex;
 use alloc::vec::Vec;
 use core::sync::atomic::AtomicU64;
 use crate::types::*;
@@ -70,26 +70,30 @@ impl PageArray {
     }
 
     fn init_page(&self, index: usize, paddr: paddr_t) -> Result<(), ErrNO> {
-        let mut page = self.get_page(index).ok_or_else(|| ErrNO::NoMem)?;
-
-        unsafe { page.as_mut().init(paddr); }
+        let page = self.get_page(index);
+        if page == null_mut() {
+            return Err(ErrNO::NoMem);
+        }
+        unsafe { (*page).init(paddr); }
         Ok(())
     }
 
-    fn get_page(&self, index: usize) -> Option<NonNull<vm_page_t>> {
+    fn get_page(&self, index: usize) -> *mut vm_page_t {
         let ptr = index * self.obj_size + self.start;
         if ptr >= (self.start + self.len) {
-            return None;
+            return null_mut();
         }
 
-        NonNull::<vm_page_t>::new(ptr as *mut vm_page_t)
+        ptr as *mut vm_page_t
     }
 
     fn set_page_state(&self, index: usize, state: vm_page_state_t)
         -> Result<(), ErrNO> {
-        let mut page = self.get_page(index).ok_or_else(|| ErrNO::NoMem)?;
-
-        unsafe { page.as_mut().set_state(state); }
+        let page = self.get_page(index);
+        if page == null_mut() {
+            return Err(ErrNO::NoMem);
+        }
+        unsafe { (*page).set_state(state); }
         Ok(())
     }
 }
@@ -167,8 +171,10 @@ impl PmmArena {
             if i >= array_start_index && i < array_end_index {
                 self.page_array.set_page_state(i, vm_page_state::WIRED)?;
             } else {
-                let page = self.page_array.get_page(i)
-                    .ok_or_else(|| ErrNO::NoMem)?;
+                let page = self.page_array.get_page(i);
+                if page == null_mut() {
+                    return Err(ErrNO::NoMem);
+                }
 
                 list.add_tail(page);
             }
@@ -192,18 +198,17 @@ impl PmmArena {
         self.info.size
     }
 
-    fn address_in_arena(&self, address: paddr_t) -> bool {
-        address >= self.base() && address <= self.base() + self.size() - 1
+    fn address_in_arena(&self, pa: paddr_t) -> bool {
+        pa >= self.base() && pa <= self.base() + self.size() - 1
     }
 
-    fn find_specific(&self, pa: paddr_t) -> Option<NonNull<vm_page_t>> {
+    fn find_specific(&self, pa: paddr_t) -> *mut vm_page_t {
         if !self.address_in_arena(pa) {
-            return None;
+            return null_mut();
         }
 
         let index = (pa - self.base()) / PAGE_SIZE;
         ZX_ASSERT!(index < self.size() / PAGE_SIZE);
-
         self.page_array.get_page(index)
     }
 }
@@ -297,12 +302,7 @@ impl PmmNode {
          * if the physical page belongs to it */
         for area in &self.arenas {
             while allocated < count && area.address_in_arena(address) {
-                let mut page: NonNull<vm_page_t>;
-                if let Some(p) = area.find_specific(address) {
-                    page = p;
-                } else {
-                    break;
-                }
+                let page = area.find_specific(address);
 
                 /* As we hold lock_, we can assume that any page
                  * in the FREE state is owned by us, and protected by lock_,
@@ -310,15 +310,15 @@ impl PmmNode {
                  * to assume it is in the free list, remove it from said list,
                  * and allocate it. */
                 unsafe {
-                    if !page.as_ref().is_free() {
+                    if !(*page).is_free() {
                         break;
                     }
                     /* never allocate loaned pages for caller of AllocRange() */
-                    if page.as_ref().is_loaned() {
+                    if (*page).is_loaned() {
                         break;
                     }
 
-                    page.as_mut().delete_from_list();
+                    (*page).delete_from_list();
                     self.alloc_page_helper_locked(page);
                     list.add_tail(page);
                     allocated += 1;
@@ -343,17 +343,15 @@ impl PmmNode {
         Ok(())
     }
 
-    fn alloc_page(&mut self, _flags: usize) -> Option<NonNull<vm_page_t>> {
+    fn alloc_page(&mut self, _flags: usize) -> *mut vm_page_t {
         let page = self.free_list.pop_head();
-        if let Some(p) = page {
-            unsafe {
-                dprintf!(INFO, "alloc page: pa {:x}\n", p.as_ref().paddr());
-                ZX_ASSERT!(!p.as_ref().is_loaned());
-                self.alloc_page_helper_locked(p);
-            }
-            self.decrement_free_count_locked(1);
+        unsafe {
+            dprintf!(INFO, "alloc page: pa {:x}\n", (*page).paddr());
+            ZX_ASSERT!(!(*page).is_loaned());
+            self.alloc_page_helper_locked(page);
         }
-        return page;
+        self.decrement_free_count_locked(1);
+        page
     }
 
     fn alloc_pages(&mut self, mut count: usize, alloc_flags: usize,
@@ -368,13 +366,19 @@ impl PmmNode {
         if count == 0 {
             return Ok(());
         } else if count == 1 {
-            let page = self.alloc_page(alloc_flags).ok_or_else(||ErrNO::NoMem)?;
+            let page = self.alloc_page(alloc_flags);
+            if page == null_mut() {
+                return Err(ErrNO::NoMem);
+            }
             list.add_tail(page);
             return Ok(());
         }
 
         while count > 0 {
-            let page = self.free_list.pop_head().ok_or_else(||ErrNO::NoMem)?;
+            let page = self.free_list.pop_head();
+            if page == null_mut() {
+                return Err(ErrNO::NoMem);
+            }
             unsafe {
                 self.alloc_page_helper_locked(page);
             }
@@ -390,13 +394,13 @@ impl PmmNode {
         todo!("Implement [free_list_locked]");
     }
 
-    unsafe fn alloc_page_helper_locked(&self, mut page: NonNull<vm_page_t>) {
+    unsafe fn alloc_page_helper_locked(&self, page: *mut vm_page_t) {
         dprintf!(SPEW, "allocating page pa {:x}, prev state {:x}\n",
-                 page.as_ref().paddr(), page.as_ref().state());
+                 (*page).paddr(), (*page).state());
 
-        ZX_ASSERT!(page.as_ref().is_free());
+        ZX_ASSERT!((*page).is_free());
 
-        if page.as_ref().is_loaned() {
+        if (*page).is_loaned() {
             /* We want the set_stack_owner() to be visible before set_state(),
              * but we don't need to make set_state() a release just for
              * the benefit of loaned pages, so we use this fence. */
@@ -412,7 +416,7 @@ impl PmmNode {
          * as both being the free list, or being in the ALLOC state,
          * indicate ownership by the PmmNode.
          */
-        page.as_mut().set_state(vm_page_state::ALLOC);
+        (*page).set_state(vm_page_state::ALLOC);
     }
 
     fn decrement_free_count_locked(&mut self, amount: u64) {
@@ -420,25 +424,38 @@ impl PmmNode {
         self.free_count.fetch_sub(amount, Ordering::Relaxed);
     }
 
+    /* We don't need to hold the arena lock while executing this,
+       since it is only accesses values that are set once
+       during system initialization. */
+    fn paddr_to_page(&self, pa: paddr_t) -> *mut vm_page_t {
+        for arena in &self.arenas {
+            if !arena.address_in_arena(pa) {
+                continue;
+            }
+            let index = (pa - arena.base()) / PAGE_SIZE;
+            return arena.page_array.get_page(index);
+        }
+        null_mut()
+    }
 }
 
 pub fn pmm_alloc_range(pa: paddr_t, count: usize, list: &mut List<vm_page_t>)
     -> Result<(), ErrNO>{
-    PMM_NODE.lock().alloc_range(pa, count, list)
+    BOOT_CONTEXT.pmm_node().alloc_range(pa, count, list)
 }
 
-pub fn pmm_alloc_page(flags: usize) -> Option<NonNull<vm_page_t>> {
-    PMM_NODE.lock().alloc_page(flags)
+pub fn pmm_alloc_page(flags: usize) -> *mut vm_page_t {
+    BOOT_CONTEXT.pmm_node().alloc_page(flags)
 }
 
 pub fn pmm_alloc_pages(count: usize, alloc_flags: usize,
                        list: &mut List<vm_page_t>)
     -> Result<(), ErrNO> {
-    PMM_NODE.lock().alloc_pages(count, alloc_flags, list)
+    BOOT_CONTEXT.pmm_node().alloc_pages(count, alloc_flags, list)
 }
 
 pub fn pmm_add_arena(info: ArenaInfo) -> Result<(), ErrNO> {
-    let mut pmm_node = PMM_NODE.lock();
+    let pmm_node = BOOT_CONTEXT.pmm_node();
     dprintf!(INFO, "Arena.{}: flags[{:x}] {:x} {:x}\n",
              info.name, info.flags, info.base, info.size);
     pmm_node.add_arena(info)
@@ -448,12 +465,14 @@ pub fn pmm_alloc_contiguous(count: usize, alloc_flags: usize,
                             alignment_log2: usize, _pa: &mut paddr_t,
                             list: &mut List<vm_page_t>)
     -> Result<(), ErrNO> {
-    let mut pmm_node = PMM_NODE.lock();
+    let pmm_node = BOOT_CONTEXT.pmm_node();
     /* if we're called with a single page, just fall through to
      * the regular allocation routine */
     if count == 1 && alignment_log2 <= PAGE_SHIFT {
-        let page =
-            pmm_node.alloc_page(alloc_flags).ok_or_else(||ErrNO::NoMem)?;
+        let page = pmm_node.alloc_page(alloc_flags);
+        if page == null_mut() {
+            return Err(ErrNO::NoMem);
+        }
         list.add_tail(page);
         return Ok(());
     }
@@ -462,4 +481,12 @@ pub fn pmm_alloc_contiguous(count: usize, alloc_flags: usize,
     //pmm_node.alloc_contiguous(count, alloc_flags, alignment_log2, pa, list)
 }
 
-pub static PMM_NODE: Mutex<PmmNode> = Mutex::new(PmmNode::new());
+pub fn paddr_to_vm_page(pa: paddr_t) -> *mut vm_page_t {
+    let pmm_node = BOOT_CONTEXT.pmm_node();
+    pmm_node.paddr_to_page(pa)
+}
+
+pub fn pmm_free(_list: &List::<vm_page_t>) {
+    todo!("pmm_free!");
+    //pmm_node.FreeList(list)
+}

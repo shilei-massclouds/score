@@ -23,7 +23,7 @@ use crate::{ErrNO, PAGE_SHIFT, PAGE_SIZE, BYTE_BITS, ZX_ASSERT};
 use crate::types::*;
 use crate::klib::list::{List, Linked};
 use crate::page::vm_page_t;
-use crate::pmm::{pmm_alloc_pages, pmm_alloc_contiguous};
+use crate::pmm::{pmm_alloc_pages, pmm_alloc_contiguous, paddr_to_vm_page, pmm_free};
 use crate::vm::{
     ARCH_MMU_FLAG_CACHED, ARCH_MMU_FLAG_PERM_READ, ARCH_MMU_FLAG_PERM_WRITE
 };
@@ -271,15 +271,11 @@ impl VirtualAlloc {
             let map_pages = min(BATCH_PAGES, num_pages - mapped_count);
             ZX_ASSERT!(map_pages > 0);
             for i in 0..BATCH_PAGES {
-                ZX_ASSERT!(!page.is_none());
-                let mut p = page.unwrap();
+                ZX_ASSERT!(page != null_mut());
                 unsafe {
-                    p.as_mut().set_state(self.allocated_page_state);
-                    paddrs[i] = p.as_ref().paddr();
-                    page = match page {
-                        Some(mut p) => p.as_mut().next(),
-                        None => panic!("No memory!"),
-                    };
+                    (*page).set_state(self.allocated_page_state);
+                    paddrs[i] = (*page).paddr();
+                    page = (*page).next();
                     if page == alloc_pages.node() {
                         break;
                     }
@@ -318,6 +314,68 @@ impl VirtualAlloc {
         self.alloc_map_pages(vstart, pages)?;
 
         Ok(vstart)
+    }
+
+    pub fn free_pages(&mut self, vaddr: vaddr_t, pages: usize)
+        -> Result<(), ErrNO> {
+        ZX_ASSERT!(self.alloc_base != 0);
+        ZX_ASSERT!(pages > 0);
+        ZX_ASSERT!(IS_PAGE_ALIGNED!(vaddr));
+
+        dprintf!(INFO, "Free {} pages at {:x}\n", pages, vaddr);
+        /* Release the bitmap range prior to unmapping to ensure any attempts
+         * to free an invalid range are caught before attempting to
+         * unmap 'random' memory. */
+        self.bitmap_free((vaddr - self.alloc_base) / PAGE_SIZE, pages)?;
+        self.unmap_free_pages(vaddr, pages)
+    }
+
+    fn bitmap_free(&mut self, start: usize, num_pages: usize)
+        -> Result<(), ErrNO> {
+        let mut _dummy: usize = 0;
+        ZX_ASSERT!(start >= self.bitmap_pages());
+        ZX_ASSERT!(self.bitmap.scan(start, start + num_pages, true, &mut _dummy));
+
+        self.bitmap.clear(start, start + num_pages)?;
+
+        if start < self.next_search_start {
+            self.next_search_start = start;
+            /* To attempt to keep allocations compact check alloc_guard_ bits
+             * backwards, and move our search start if unset. This ensures that
+             * if we alloc+free that our search_start_ gets reset to
+             * the original location, otherwise it will constantly creep by alloc_guard_. */
+            if self.next_search_start >= self.alloc_guard {
+                let mut candidate: usize = 0;
+                if self.bitmap.reverse_scan(self.next_search_start - self.alloc_guard,
+                                            self.next_search_start, false,
+                                            & mut candidate) {
+                    dprintf!(INFO, "Reverse scan moved search from {} all the way to {}\n",
+                             self.next_search_start, self.next_search_start - self.alloc_guard);
+                    self.next_search_start -= self.alloc_guard;
+                } else {
+                    dprintf!(INFO, "Reverse scan moved search from {} part way to {}\n",
+                             self.next_search_start, candidate + 1);
+                    self.next_search_start = candidate + 1;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn unmap_free_pages(&self, va: vaddr_t, pages: usize) -> Result<(), ErrNO> {
+        let mut free_list = List::<vm_page_t>::new();
+        free_list.init();
+        dprintf!(INFO, "Unmapping {} pages at 0x{:x}\n", pages, va);
+        for i in 0..pages {
+            let (pa, _) = BOOT_CONTEXT.kernel_aspace().query(va + i * PAGE_SIZE)?;
+            let page = paddr_to_vm_page(pa);
+            free_list.add_tail(page);
+        }
+        let unmapped = BOOT_CONTEXT.kernel_aspace().unmap(va, pages, false)?;
+        ZX_ASSERT!(unmapped == pages);
+        pmm_free(&free_list);
+
+        todo!("unmap_free_pages!");
     }
 
     fn bitmap_alloc(&mut self, num_pages: usize) -> Result<vaddr_t, ErrNO> {
@@ -376,9 +434,12 @@ impl VirtualAlloc {
 }
 
 pub fn heap_init() -> Result<(), ErrNO> {
-    let mut virtual_alloc =
-        VirtualAlloc::new(vm_page_state::HEAP);
+    unsafe {
+        (*BOOT_CONTEXT.data.get()).virtual_alloc =
+            Some(VirtualAlloc::new(vm_page_state::HEAP));
+    }
 
+    let virtual_alloc = BOOT_CONTEXT.virtual_alloc();
     virtual_alloc.init(vm_get_kernel_heap_base(), vm_get_kernel_heap_size(),
                        1, ARCH_HEAP_ALIGN_BITS)?;
 
@@ -388,10 +449,6 @@ pub fn heap_init() -> Result<(), ErrNO> {
              vm_get_kernel_heap_base() + vm_get_kernel_heap_size(),
              virtual_alloc.bitmap_pages(),
              virtual_alloc.bitmap_pages() * PAGE_SIZE / 1024);
-
-    unsafe {
-        (*BOOT_CONTEXT.data.get()).virtual_alloc = Some(virtual_alloc);
-    }
 
     cmpct_init()
 }

@@ -7,10 +7,17 @@
  */
 
 use crate::BOOT_CONTEXT;
+use crate::PFN_TO_PA;
+use crate::PTE_TO_PFN;
+use crate::PTE_TO_PROT;
 use crate::arch::mmu::PAGE_KERNEL;
+use crate::arch::mmu::PageTable;
+use crate::arch::mmu::_swapper_pgd;
+use crate::arch::mmu::vaddr_to_index;
 use crate::types::*;
 use alloc::vec::Vec;
 use core::cmp::max;
+use core::ptr::null_mut;
 use crate::defines::*;
 use crate::debug::*;
 use crate::vm::*;
@@ -70,10 +77,6 @@ impl VmAspaceList {
 
     pub fn get_aspace_by_id(&mut self, id: usize) -> &mut VmAspace {
         &mut self.inner[id]
-    }
-
-    pub fn _kernel_aspace(&mut self) -> &mut VmAspace {
-        self.get_aspace_by_id(0)
     }
 }
 
@@ -186,6 +189,42 @@ impl VmAspace {
         */
 
         Ok(count)
+    }
+
+    pub fn unmap(&self, _va: vaddr_t, _count: usize, _enlarge: bool)
+        -> Result<usize, ErrNO> {
+        todo!("unmap!");
+    }
+
+    pub fn query(&self, va: vaddr_t) -> Result<(paddr_t, usize), ErrNO> {
+        self.query_locked(va)
+    }
+
+    fn query_locked(&self, va: vaddr_t) -> Result<(paddr_t, usize), ErrNO> {
+        if !self.is_valid_vaddr(va) {
+            return Err(ErrNO::OutOfRange);
+        }
+
+        let mut level = 0;
+        let mut page_table = unsafe { &mut _swapper_pgd };
+        loop {
+            let index = vaddr_to_index(va, level);
+            if !page_table.item_present(index) {
+                return Err(ErrNO::NotFound);
+            }
+
+            let pte = page_table.item(index);
+            let pa = PFN_TO_PA!(PTE_TO_PFN!(pte));
+            if page_table.item_leaf(index) {
+                let prot = PTE_TO_PROT!(pte);
+                return Ok((pa, prot));
+            }
+
+            unsafe {
+                page_table = &mut *(paddr_to_physmap(pa) as *mut PageTable);
+            }
+            level += 1;
+        }
     }
 }
 
@@ -344,16 +383,15 @@ pub fn vm_init_preheap() -> Result<(), ErrNO> {
 
     // grab a page and mark it as the zero page
     let zero_page = pmm_alloc_page(0);
-    if let Some(mut page) = zero_page {
-        /* consider the zero page a wired page part of the kernel. */
-        unsafe {
-            page.as_mut().set_state(vm_page_state::WIRED);
-            let va = paddr_to_physmap(page.as_ref().paddr());
-            ZX_ASSERT!(va != 0);
-            arch_zero_page(va);
-        }
-    } else {
+    if zero_page == null_mut() {
         panic!("alloc zero page error!");
+    }
+    /* consider the zero page a wired page part of the kernel. */
+    unsafe {
+        (*zero_page).set_state(vm_page_state::WIRED);
+        let va = paddr_to_physmap((*zero_page).paddr());
+        ZX_ASSERT!(va != 0);
+        arch_zero_page(va);
     }
 
     /* AnonymousPageRequester::Init(); */
@@ -375,7 +413,7 @@ fn vm_init_preheap_vmars() {
     unsafe {
         ctx = &mut (*BOOT_CONTEXT.data.get());
     }
-    let kernel_aspace = ctx.get_aspace_by_id(0);
+    let kernel_aspace = ctx.kernel_aspace();
     let root_vmar = kernel_aspace.get_root_vmar();
 
     root_vmar.insert_child(kernel_physmap_vmar);
@@ -438,11 +476,12 @@ fn kernel_aspace_init_preheap() -> Result<(), ErrNO> {
     kernel_aspace.root_vmar = Some(root_vmar);
     kernel_aspace.init()?;
 
-    let mut aspaces = VmAspaceList::new();
-    aspaces.push(kernel_aspace);
     unsafe {
-        (*BOOT_CONTEXT.data.get()).vm_aspace_list = Some(aspaces);
+        (*BOOT_CONTEXT.data.get()).vm_aspace_list = Some(VmAspaceList::new());
     }
+
+    let aspaces = BOOT_CONTEXT.aspaces();
+    aspaces.push(kernel_aspace);
     dprintf!(INFO, "kernel_aspace_init_preheap ok!\n");
 
     Ok(())

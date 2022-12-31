@@ -12,6 +12,11 @@ BUILDDIR := target/riscv64gc-unknown-none-elf/release/
 KERNEL := $(BUILDDIR)/kernel
 TARGET := $(BUILDDIR)/kernel.bin
 
+FEATURES :=
+ifdef TEST
+FEATURES += --features unittest
+endif
+
 CROSS_COMPILE := riscv64-linux-gnu-
 
 OBJCOPY = $(CROSS_COMPILE)objcopy
@@ -28,7 +33,7 @@ $(TARGET): $(KERNEL)
 	@$(OBJCOPY) $^ -S -R .eh_frame -R .note -R .comment -O binary $@
 
 $(KERNEL): FORCE
-	@cargo build --target riscv64gc-unknown-none-elf --release
+	@cargo build --target riscv64gc-unknown-none-elf $(FEATURES) --release
 	@$(NM) -n $@ | grep -v '\( [aNUw] \)\|\(__crc_\)\|\( \$[adt]\)\|\( \.L\)' > System.map
 
 clean:

@@ -15,7 +15,6 @@ use crate::errors::ErrNO;
 use crate::stdio::STDOUT;
 use crate::debug::*;
 use crate::vm_page_state;
-use core::ptr::NonNull;
 use crate::page::vm_page_t;
 use crate::pmm::{pmm_alloc_page, PMM_ALLOC_FLAG_ANY};
 use crate::{dprintf, print};
@@ -28,7 +27,7 @@ const PAGE_TABLE_ENTRIES: usize = 1 << (PAGE_SHIFT - 3);
  *       PFN      reserved for SW   D   A   G   U   X   W   R   V
  */
 
-const _PAGE_PFN_SHIFT: usize = 10;
+pub const _PAGE_PFN_SHIFT: usize = 10;
 
 const _PAGE_PRESENT : usize = 1 << 0;     /* Valid */
 const _PAGE_READ    : usize = 1 << 1;     /* Readable */
@@ -73,11 +72,11 @@ impl PageTable {
         self.0[index] = (pfn << _PAGE_PFN_SHIFT) | prot;
     }
 
-    fn item_present(&self, index: usize) -> bool {
+    pub fn item_present(&self, index: usize) -> bool {
         (self.0[index] & _PAGE_PRESENT) == _PAGE_PRESENT
     }
 
-    fn item_leaf(&self, index: usize) -> bool {
+    pub fn item_leaf(&self, index: usize) -> bool {
         self.item_present(index) && ((self.0[index] & _PAGE_LEAF) != 0)
     }
 
@@ -196,10 +195,31 @@ macro_rules! PA_TO_PFN {
     }
 }
 
+#[macro_export]
+macro_rules! PFN_TO_PA {
+    ($pfn: expr) => {
+        (($pfn) << PAGE_SHIFT)
+    }
+}
+
+#[macro_export]
+macro_rules! PTE_TO_PFN {
+    ($pte: expr) => {
+        (($pte) >> crate::arch::mmu::_PAGE_PFN_SHIFT)
+    }
+}
+
+#[macro_export]
+macro_rules! PTE_TO_PROT {
+    ($pte: expr) => {
+        (($pte) & ((1 << crate::arch::mmu::_PAGE_PFN_SHIFT) - 1))
+    }
+}
+
 #[allow(dead_code)]
 pub const MMU_KERNEL_SIZE_SHIFT: usize = KERNEL_ASPACE_BITS;
 
-fn vaddr_to_index(addr: usize, level: usize) -> usize {
+pub fn vaddr_to_index(addr: usize, level: usize) -> usize {
     (addr >> LEVEL_SHIFT!(level)) & (PAGE_TABLE_ENTRIES - 1)
 }
 
@@ -354,16 +374,20 @@ pub fn map_page_table(mut vaddr: vaddr_t, mut paddr: paddr_t, mut size: usize,
 }
 
 fn alloc_page_table() -> Result<paddr_t, ErrNO> {
-    let mut page = cache_alloc_page()?;
+    let page = cache_alloc_page()?;
 
     unsafe {
-        page.as_mut().set_state(vm_page_state::MMU);
+        (*page).set_state(vm_page_state::MMU);
         //kcounter_add(vm_mmu_page_table_alloc, 1);
-        return Ok(page.as_ref().paddr());
+        return Ok((*page).paddr());
     }
 }
 
-fn cache_alloc_page() -> Result<NonNull<vm_page_t>, ErrNO> {
+fn cache_alloc_page() -> Result<*mut vm_page_t, ErrNO> {
     /* Todo: Implement PageCache on the next step. */
-    pmm_alloc_page(PMM_ALLOC_FLAG_ANY).ok_or_else(||ErrNO::NoMem)
+    let page = pmm_alloc_page(PMM_ALLOC_FLAG_ANY);
+    if page == null_mut() {
+        return Err(ErrNO::NoMem);
+    }
+    Ok(page)
 }

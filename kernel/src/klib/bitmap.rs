@@ -6,14 +6,14 @@
  * at https://opensource.org/licenses/MIT
  */
 
-use core::{ptr::NonNull, cmp};
+use core::{cmp, ptr::null_mut};
 
 use crate::{types::vaddr_t, errors::ErrNO, defines::{BYTE_BITS, BYTES_PER_USIZE}};
 
 pub struct Bitmap {
     size: usize,
     storage_num: usize,    /* units of storage */
-    storage_data: NonNull<usize>,
+    storage_data: *mut usize,
 }
 
 impl Bitmap {
@@ -21,13 +21,13 @@ impl Bitmap {
         Self {
             size: 0,
             storage_num: 0,
-            storage_data: NonNull::<usize>::dangling(),
+            storage_data: null_mut(),
         }
     }
 
     pub fn storage_init(&mut self, base: vaddr_t, size: usize) {
         self.storage_num = size / BYTES_PER_USIZE;
-        self.storage_data = NonNull::new(base as *mut usize).unwrap();
+        self.storage_data = base as *mut usize;
     }
 
     pub fn storage_num(&self) -> usize {
@@ -51,10 +51,9 @@ impl Bitmap {
         }
         let first_idx = first_idx(bitoff);
         let last_idx = last_idx(bitmax);
-
         for i in first_idx..=last_idx {
             unsafe {
-                *self.storage_data.as_ptr().offset(i as isize) |=
+                *self.storage_data.offset(i as isize) |=
                     get_mask(i == first_idx, i == last_idx, bitoff, bitmax);
             }
         }
@@ -62,15 +61,33 @@ impl Bitmap {
         Ok(())
     }
 
+    pub fn clear(&mut self, bitoff: usize, bitmax: usize) -> Result<(), ErrNO> {
+        if bitoff > bitmax || bitmax > self.size {
+            return Err(ErrNO::InvalidArgs);
+        }
+        if bitoff == bitmax {
+            return Ok(());
+        }
+        let first_idx = first_idx(bitoff);
+        let last_idx = last_idx(bitmax);
+        for i in first_idx..=last_idx {
+            unsafe {
+                *self.storage_data.offset(i as isize) &=
+                    !get_mask(i == first_idx, i == last_idx, bitoff, bitmax);
+            }
+        }
+        Ok(())
+    }
+
     fn _storage_unit_ptr(&self, idx: usize) -> *mut usize {
         unsafe {
-            self.storage_data.as_ptr().offset(idx as isize)
+            self.storage_data.offset(idx as isize)
         }
     }
 
     fn storage_unit_ref(&self, idx: usize) -> usize {
         unsafe {
-            *self.storage_data.as_ptr().offset(idx as isize)
+            *self.storage_data.offset(idx as isize)
         }
     }
 
@@ -94,7 +111,7 @@ impl Bitmap {
         }
     }
 
-    fn scan(&self, bitoff: usize, mut bitmax: usize, is_set: bool,
+    pub fn scan(&self, bitoff: usize, mut bitmax: usize, is_set: bool,
         out: &mut usize) -> bool {
         bitmax = cmp::min(bitmax, self.size);
         if bitoff >= bitmax {
@@ -109,6 +126,27 @@ impl Bitmap {
             }
         }
         return true;
+    }
+
+    pub fn reverse_scan(&self, bitoff: usize, mut bitmax: usize, is_set: bool,
+                        out: &mut usize) -> bool {
+        bitmax = cmp::min(bitmax, self.size);
+        if bitoff >= bitmax {
+            return true;
+        }
+        let mut i = last_idx(bitmax);
+        loop {
+            let data = self.storage_unit_ref(i);
+            let masked = mask_bits(data, i, bitoff, bitmax, is_set);
+            if masked != 0 {
+                *out = (i + 1) * BITMAP_UNIT_BITS - (masked.leading_zeros() as usize + 1);
+                return false;
+            }
+            if i == first_idx(bitoff) {
+                return true;
+            }
+            i -= 1;
+        }
     }
 }
 

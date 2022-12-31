@@ -157,7 +157,9 @@ fn boot_reserve_wire() -> Result<(), ErrNO> {
 
     /* mark all of the pages we allocated as WIRED */
     for page in &mut total_list.iter_mut() {
-        page.set_state(vm_page_state::WIRED);
+        unsafe {
+            (*page).set_state(vm_page_state::WIRED);
+        }
     }
 
     RESERVED_PAGE_LIST.lock().splice(&mut total_list);
