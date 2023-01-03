@@ -166,17 +166,6 @@ pub fn boot_heap_earliest_init() {
     ALLOCATOR.init(start, size);
 }
 
-pub fn boot_heap_mark_pages_in_use() {
-    /* boot heap area is included in kernel */
-    /*
-    let allocator = ALLOCATOR.lock();
-
-    let start = kernel_va_to_pa(allocator.start);
-    let end = kernel_va_to_pa(allocator.next);
-    mark_pages_in_use(start, end - start);
-    */
-}
-
 /* VirtualAlloc is a page granule allocator that manages a given virtual region
  * and provides virtually contiguous allocations inside that region.
  * This allocator explicitly has no dependency on the heap and retrieves
@@ -502,5 +491,8 @@ pub fn heap_init() -> Result<(), ErrNO> {
     cmpct_init()?;
 
     ALLOCATOR.switch_stage(AllocatorStage::Boot);
+
+    /* Todo: Memory occupied by BumpAllocator can be checked!
+     * Free those unused pages! */
     Ok(())
 }
