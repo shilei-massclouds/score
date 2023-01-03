@@ -7,11 +7,11 @@
  */
 
 use crate::{debug::*, BOOT_CONTEXT};
-use crate::klib::cmpctmalloc::cmpct_init;
+use crate::klib::cmpctmalloc::{cmpct_init, cmpct_free, cmpct_memalign};
 use alloc::alloc::{GlobalAlloc, Layout};
+use core::cell::UnsafeCell;
 use core::cmp::min;
 use core::ptr::null_mut;
-use spin::{Mutex, MutexGuard};
 use crate::klib::bitmap::Bitmap;
 use crate::vm_page_state::{self, *};
 use crate::defines::{_boot_heap, _boot_heap_end, BYTES_PER_USIZE};
@@ -32,22 +32,6 @@ extern crate alloc;
 
 const BATCH_PAGES: usize = 128;
 
-/// A wrapper around spin::Mutex to permit trait implementations.
-pub struct Locked<A> {
-    inner: Mutex<A>,
-}
-
-impl<A> Locked<A> {
-    pub const fn new(inner: A) -> Self {
-        Locked {
-            inner: Mutex::new(inner),
-        }
-    }
-    pub fn lock(&self) -> MutexGuard<A> {
-        self.inner.lock()
-    }
-}
-
 pub struct BumpAllocator {
     start:  usize,
     end:    usize,
@@ -56,7 +40,7 @@ pub struct BumpAllocator {
 }
 
 impl BumpAllocator {
-    /// Creates a new empty bump allocator.
+    /* Creates a new empty bump allocator. */
     pub const fn new() -> Self {
         BumpAllocator {
             start: 0,
@@ -75,28 +59,95 @@ impl BumpAllocator {
         self.end = start + size;
         self.next = start;
     }
-}
 
-unsafe impl GlobalAlloc for Locked<BumpAllocator> {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let mut bump = self.lock(); // get a mutable reference
-
-        let start = ALIGN!(bump.next, layout.align());
+    unsafe fn alloc(&mut self, layout: Layout) -> *mut u8 {
+        let start = ALIGN!(self.next, layout.align());
         let end = start + layout.size();
-        if end > bump.end {
+        if end > self.end {
             null_mut()  // out of memory
         } else {
-            bump.next = end;
-            bump.allocations += 1;
+            self.next = end;
+            self.allocations += 1;
             start as *mut u8
         }
     }
-    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
-        let mut bump = self.lock(); // get a mutable reference
 
-        bump.allocations -= 1;
-        if bump.allocations == 0 {
-            bump.next = bump.start;
+    unsafe fn dealloc(&mut self, _ptr: *mut u8, _layout: Layout) {
+        self.allocations -= 1;
+        if self.allocations == 0 {
+            self.next = self.start;
+        }
+    }
+}
+
+enum AllocatorStage {
+    Early,
+    Boot,
+    _Normal,
+}
+
+struct GlobalAllocator {
+    stage: UnsafeCell<AllocatorStage>,
+    early_stage: UnsafeCell<BumpAllocator>,
+}
+
+unsafe impl Send for GlobalAllocator {}
+unsafe impl Sync for GlobalAllocator {}
+
+impl GlobalAllocator {
+    /* Creates a new empty bump allocator. */
+    pub const fn new() -> Self {
+        Self {
+            stage: UnsafeCell::new(AllocatorStage::Early),
+            early_stage: UnsafeCell::new(BumpAllocator::new()),
+        }
+    }
+
+    pub fn init(&self, start: usize, size: usize) {
+        unsafe {
+            (*self.early_stage.get()).init(start, size);
+        }
+    }
+
+    pub fn stage(&self) -> &AllocatorStage {
+        unsafe { &(*self.stage.get()) }
+    }
+
+    pub fn switch_stage(&self, stage: AllocatorStage) {
+        if let AllocatorStage::Early = stage {
+            panic!("Cannot swith to Early stage!");
+        }
+        unsafe { (*self.stage.get()) = stage; }
+    }
+}
+
+unsafe impl GlobalAlloc for GlobalAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        match self.stage() {
+            AllocatorStage::Early => {
+                (*self.early_stage.get()).alloc(layout)
+            },
+            AllocatorStage::Boot => {
+                println!("### layout {} {}", layout.size(), layout.align());
+                cmpct_memalign(layout.align(), layout.size())
+            },
+            AllocatorStage::_Normal => {
+                todo!("Normal!");
+            }
+        }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        match self.stage() {
+            AllocatorStage::Early => {
+                (*self.early_stage.get()).dealloc(ptr, layout)
+            },
+            AllocatorStage::Boot => {
+                cmpct_free(ptr)
+            },
+            AllocatorStage::_Normal => {
+                todo!("Normal!");
+            }
         }
     }
 }
@@ -107,14 +158,12 @@ fn alloc_error_handler(layout: alloc::alloc::Layout) -> ! {
 }
 
 #[global_allocator]
-static ALLOCATOR: Locked<BumpAllocator> = Locked::new(BumpAllocator::new());
+static ALLOCATOR: GlobalAllocator = GlobalAllocator::new();
 
 pub fn boot_heap_earliest_init() {
     let start = _boot_heap as usize;
     let size = _boot_heap_end as usize - start;
-    unsafe {
-        ALLOCATOR.lock().init(start, size);
-    }
+    ALLOCATOR.init(start, size);
 }
 
 pub fn boot_heap_mark_pages_in_use() {
@@ -450,5 +499,8 @@ pub fn heap_init() -> Result<(), ErrNO> {
              virtual_alloc.bitmap_pages(),
              virtual_alloc.bitmap_pages() * PAGE_SIZE / 1024);
 
-    cmpct_init()
+    cmpct_init()?;
+
+    ALLOCATOR.switch_stage(AllocatorStage::Boot);
+    Ok(())
 }

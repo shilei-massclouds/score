@@ -198,6 +198,7 @@ fn heap_grow(mut size: usize) -> Result<(), ErrNO> {
      * the maximum allocation */
     ZX_ASSERT!(size <= HEAP_LARGE_ALLOC_BYTES);
 
+    println!("### heap_grow size 0x{:x} ", size);
     /* The new free list entry will have a header on each side (the
      * sentinels) so we need to grow the gross heap size by this much more. */
     size += HEAP_GROW_OVER_HEAD;
@@ -297,8 +298,6 @@ fn create_free_area(area: vaddr_t, left: *mut header_t, size: usize) {
     heap.set_free_list_bit(bucket);
     heap.free_lists[bucket].add_head(ptr);
     heap.remaining += size;
-    dprintf!(INFO, "create_free_area bucket {}: limit {}\n",
-             bucket, NUMBER_OF_BUCKETS);
 }
 
 // Round up size to next bucket when allocating.
@@ -360,8 +359,6 @@ pub fn cmpct_alloc(size: usize) -> *mut u8 {
     if size > HEAP_MAX_ALLOC_SIZE {
         return null_mut();
     }
-
-    let alloc_size = size;
 
     let (start_bucket, rounded_up) = size_to_index_allocating(size);
 
@@ -433,8 +430,47 @@ pub fn cmpct_alloc(size: usize) -> *mut u8 {
         ret = create_allocation_header(head as vaddr_t, 0,
             (*head).header.size(), (*head).header.left);
     }
-    memset(ret, 0, alloc_size);
+    memset(ret, 0, size);
+    dprintf!(INFO, "cmpct_alloc 0x{:x} 0x{:x}...\n", size, ret);
     ret as *mut u8
+}
+
+pub fn cmpct_memalign(align: usize, size: usize) -> *mut u8 {
+    if size == 0 {
+        return null_mut();
+    }
+
+    if align < 8 {
+        return cmpct_alloc(size);
+    }
+
+    let padded_size = size + align + SIZE_OF_FREE_T;
+
+    let unaligned = cmpct_alloc(padded_size);
+    if unaligned == null_mut() {
+        return null_mut();
+    }
+    let unaligned = unaligned as vaddr_t;
+
+    let mask = align - 1;
+    let payload = (unaligned + SIZE_OF_FREE_T + mask) & !mask;
+    if unaligned != payload {
+        let unaligned_header = (unaligned - SIZE_OF_HEADER_T) as *mut header_t;
+        let header = payload - SIZE_OF_HEADER_T;
+        let left_over = payload - unaligned;
+        unsafe {
+            create_allocation_header(header, 0,
+                                     (*unaligned_header).size() - left_over,
+                                     unaligned_header);
+
+            let right = right_header(unaligned_header);
+            (*unaligned_header).size = left_over as u32;
+            (*right).left = header as *mut header_t;
+        }
+        cmpct_free(unaligned as *mut u8);
+    }
+
+    payload as *mut u8
 }
 
 fn unlink_free(free_area: *mut free_t, bucket: usize) {
@@ -476,6 +512,7 @@ fn find_nonempty_bucket(index: usize) -> Result<usize, ErrNO> {
 }
 
 pub fn cmpct_free(payload: *mut u8) {
+    dprintf!(INFO, "cmpct_free 0x{:x}...\n", payload as usize);
     if payload == null_mut() {
         return;
     }
@@ -498,8 +535,8 @@ fn cmpct_free_internal(_payload: *mut u8, header: *mut header_t)
     }
 
     unsafe {
-        dprintf!(INFO, "cmpct_free_internal: left {:x} size {:x} flag {:x} \n",
-            left as vaddr_t, (*left).size(), (*left).flag);
+        dprintf!(INFO, "cmpct_free_internal: left {:x} size 0x{:x} flag {:x} self.size 0x{:x}\n",
+            left as vaddr_t, (*left).size(), (*left).flag, size);
     }
 
     if left != null_mut() && is_tagged_as_free(left) {
@@ -520,7 +557,7 @@ fn cmpct_free_internal(_payload: *mut u8, header: *mut header_t)
             /* Coalesce only left. */
             unsafe {
                 (*right).left = left;
-                free_memory(left as vaddr_t, left_left, (*left).size())?;
+                free_memory(left as vaddr_t, left_left, (*left).size() + size)?;
             }
         }
     } else {
