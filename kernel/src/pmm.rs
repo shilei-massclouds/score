@@ -437,6 +437,14 @@ impl PmmNode {
         }
         null_mut()
     }
+
+    pub fn _num_arenas(&self) -> usize {
+        self.arenas.len()
+    }
+
+    pub fn _get_arenas(&self) -> &Vec<PmmArena> {
+        &self.arenas
+    }
 }
 
 pub fn pmm_alloc_range(pa: paddr_t, count: usize, list: &mut List<vm_page_t>)

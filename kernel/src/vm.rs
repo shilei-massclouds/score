@@ -6,7 +6,10 @@
  * at https://opensource.org/licenses/MIT
  */
 
+use alloc::vec::Vec;
 use spin::lazy::Lazy;
+use crate::errors::ErrNO;
+use crate::pmm::PmmArena;
 use crate::types::*;
 use crate::defines::*;
 use crate::debug::*;
@@ -87,3 +90,85 @@ pub fn mark_pages_in_use(pa: paddr_t, len: usize) {
         }
     }
 }
+
+pub fn vm_init() -> Result<(), ErrNO> {
+    // Protect the regions of the physmap that are not backed by normal memory.
+    //
+    // See the comments for |phsymap_protect_non_arena_regions| for why we're doing this.
+    //
+    physmap_protect_non_arena_regions();
+
+    // Mark the physmap no-execute.
+    physmap_protect_arena_regions_noexecute();
+
+    /* Todo: vm_init! */
+    Ok(())
+}
+
+fn physmap_protect_non_arena_regions() {
+    /*
+    // Create a buffer to hold the pmm_arena_info_t objects.
+    let pmm_node = BOOT_CONTEXT.pmm_node();
+    let physmap_protect_gap = |base: vaddr_t, size: usize| {
+        // Ideally, we'd drop the range completely, but early boot code currently relies
+        // on peripherals being mapped in.
+        //
+        // TODO(fxbug.dev/47856): Remove these regions completely.
+        physmap_protect_region(base, size, kGapMmuFlags);
+    };
+    physmap_for_each_gap(&physmap_protect_gap, pmm_node.get_arenas());
+    */
+}
+
+fn _physmap_for_each_gap<F>(_func: &F, _arenas: &Vec<PmmArena>)
+    where F: Fn(vaddr_t, usize) {
+}
+/*
+  // Iterate over the arenas and invoke |func| for the gaps between them.
+  //
+  // |gap_base| is the base address of the last identified gap.
+  vaddr_t gap_base = PHYSMAP_BASE;
+  for (unsigned i = 0; i < num_arenas; ++i) {
+    const vaddr_t arena_base = reinterpret_cast<vaddr_t>(paddr_to_physmap(arenas[i].base));
+    DEBUG_ASSERT(arena_base >= gap_base && arena_base % PAGE_SIZE == 0);
+
+    const size_t arena_size = arenas[i].size;
+    DEBUG_ASSERT(arena_size > 0 && arena_size % PAGE_SIZE == 0);
+
+    LTRACEF("gap_base=%" PRIx64 "; arena_base=%" PRIx64 "; arena_size=%" PRIx64 "\n", gap_base,
+            arena_base, arena_size);
+
+    const size_t gap_size = arena_base - gap_base;
+    if (gap_size > 0) {
+      func(gap_base, gap_size);
+    }
+
+    gap_base = arena_base + arena_size;
+  }
+
+  // Don't forget the last gap.
+  const vaddr_t physmap_end = PHYSMAP_BASE + PHYSMAP_SIZE;
+  const size_t gap_size = physmap_end - gap_base;
+  if (gap_size > 0) {
+    func(gap_base, gap_size);
+  }
+  */
+
+fn physmap_protect_arena_regions_noexecute() {
+}
+/*
+  const size_t num_arenas = pmm_num_arenas();
+  fbl::AllocChecker ac;
+  auto arenas = ktl::unique_ptr<pmm_arena_info_t[]>(new (&ac) pmm_arena_info_t[num_arenas]);
+  ASSERT(ac.check());
+  const size_t size = num_arenas * sizeof(pmm_arena_info_t);
+
+  zx_status_t status = pmm_get_arena_info(num_arenas, 0, arenas.get(), size);
+  ASSERT(status == ZX_OK);
+
+  for (uint i = 0; i < num_arenas; i++) {
+    physmap_protect_region(reinterpret_cast<vaddr_t>(paddr_to_physmap(arenas[i].base)),
+                           /*size=*/arenas[i].size, /*mmu_flags=*/kPhysmapMmuFlags);
+  }
+}
+*/

@@ -32,6 +32,7 @@ use crate::platform::platform_early_init;
 use crate::aspace::vm_init_preheap;
 use crate::klib::list::List;
 use crate::allocator::heap_init;
+use crate::vm::vm_init;
 
 global_asm!(include_str!("arch/riscv64/start.S"));
 
@@ -313,6 +314,11 @@ fn _lk_main() -> Result<(), ErrNO> {
     dprintf!(SPEW, "initializing heap\n");
     heap_init()?;
     // lk_primary_cpu_init_level(LK_INIT_LEVEL_HEAP, LK_INIT_LEVEL_VM - 1);
+
+    // enable virtual memory
+    dprintf!(SPEW, "initializing vm\n");
+    vm_init()?;
+    // lk_primary_cpu_init_level(LK_INIT_LEVEL_VM, LK_INIT_LEVEL_TOPOLOGY - 1);
 
     println!("lk_main ok!");
 
