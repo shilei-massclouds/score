@@ -6,12 +6,10 @@
  * at https://opensource.org/licenses/MIT
  */
 
-use crate::types::*;
+use crate::{types::*, BOOT_CONTEXT};
 use crate::errors::ErrNO;
-use alloc::vec::Vec;
 use crate::debug::*;
 use crate::{dprintf, print, ZX_ASSERT};
-use spin::Mutex;
 use crate::klib::range::intersects;
 
 pub const MAX_RESERVES: usize = 64;
@@ -22,9 +20,6 @@ pub struct BootReserveRange {
     pub len: usize,
 }
 
-pub static RESERVE_RANGES: Mutex<Vec<BootReserveRange>> =
-    Mutex::new(Vec::new());
-
 pub fn boot_reserve_init(pa: paddr_t, len: usize) -> Result<(), ErrNO> {
     /* add the kernel to the boot reserve list */
     boot_reserve_add_range(pa, len)
@@ -34,7 +29,7 @@ pub fn boot_reserve_add_range(pa: paddr_t, len: usize) -> Result<(), ErrNO> {
     dprintf!(INFO, "PMM: boot reserve add [0x{:x}, 0x{:x}]\n",
              pa, pa + len - 1);
 
-    let mut res = RESERVE_RANGES.lock();
+    let res = BOOT_CONTEXT.reserve_ranges();
     if res.len() == (MAX_RESERVES - 1) {
         panic!("too many boot reservations");
     }
@@ -78,7 +73,7 @@ pub fn boot_reserve_range_search(range_pa: paddr_t, range_len: usize,
     dprintf!(INFO, "trying alloc range {:x} len {:x}\n",
              alloc_pa, alloc_len);
 
-    let res = RESERVE_RANGES.lock();
+    let res = BOOT_CONTEXT.reserve_ranges();
     'retry: loop {
         for r in res.iter() {
             if intersects(r.pa, r.len, alloc_pa, alloc_len) {

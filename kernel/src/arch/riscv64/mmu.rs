@@ -9,10 +9,10 @@
 use core::cmp::min;
 use core::ptr::null_mut;
 use core::arch::asm;
+use crate::BOOT_CONTEXT;
 use crate::types::*;
 use crate::defines::*;
 use crate::errors::ErrNO;
-use crate::stdio::STDOUT;
 use crate::debug::*;
 use crate::vm_page_state;
 use crate::page::vm_page_t;
@@ -98,17 +98,19 @@ extern "C" {
 
 #[no_mangle]
 pub extern "C" fn setup_vm() {
+    let stdout = BOOT_CONTEXT.stdout();
+
     let mut used: usize = 0;
     let mut alloc = || {
         unsafe {
             if used >= (MMU_MAX_LEVEL - 1) {
-                STDOUT.lock().puts("Out of boot tables!\n");
+                stdout.puts("Out of boot tables!\n");
                 return null_mut();
             }
             let base = &mut _swapper_tables[used] as *mut PageTable;
-            STDOUT.lock().puts("In alloc[");
-            STDOUT.lock().put_u64(base as u64);
-            STDOUT.lock().puts("]In alloc!\n");
+            stdout.puts("In alloc[");
+            stdout.put_u64(base as u64);
+            stdout.puts("]In alloc!\n");
             used += 1;
             return base;
         }
@@ -123,7 +125,7 @@ pub extern "C" fn setup_vm() {
     let ret = boot_map(KERNEL_ASPACE_BASE, 0, ARCH_PHYSMAP_SIZE,
                        PAGE_KERNEL, &mut alloc, &phys_to_virt);
     if let Err(_) = ret {
-        STDOUT.lock().puts("map physmap error!\n");
+        stdout.puts("map physmap error!\n");
         panic!("map physmap error!");
     }
 
@@ -132,7 +134,7 @@ pub extern "C" fn setup_vm() {
                        _start as usize, (_end as usize) - (_start as usize),
                        PAGE_KERNEL_EXEC, &mut alloc, &phys_to_virt);
     if let Err(_) = ret {
-        STDOUT.lock().puts("map kernel image error!\n");
+        stdout.puts("map kernel image error!\n");
         panic!("map kernel image error!");
     }
 

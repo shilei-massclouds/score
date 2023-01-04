@@ -14,10 +14,15 @@
 
 use core::arch::global_asm;
 use core::cell::UnsafeCell;
+use alloc::vec::Vec;
 use allocator::VirtualAlloc;
 use aspace::{VmAspaceList, VmAspace};
 use klib::cmpctmalloc::Heap;
+use page::vm_page_t;
+use platform::boot_reserve::BootReserveRange;
+use platform::periphmap::PeriphRange;
 use pmm::PmmNode;
+use stdio::StdOut;
 
 use crate::debug::*;
 use crate::allocator::boot_heap_earliest_init;
@@ -26,7 +31,6 @@ use crate::defines::*;
 use crate::platform::platform_early_init;
 use crate::aspace::vm_init_preheap;
 use crate::klib::list::List;
-use crate::platform::RESERVED_PAGE_LIST;
 use crate::allocator::heap_init;
 
 global_asm!(include_str!("arch/riscv64/start.S"));
@@ -36,7 +40,7 @@ extern crate alloc;
 #[path = "arch/riscv64/mod.rs"]
 mod arch;
 
-#[path = "platform/riscv/platform.rs"]
+#[path = "platform/riscv/mod.rs"]
 mod platform;
 
 #[macro_use]
@@ -65,23 +69,31 @@ mod aspace;
 mod vm;
 
 pub struct BootContext {
+    reserve_ranges: Vec::<BootReserveRange>,
+    periph_ranges: Vec::<PeriphRange>,
+    reserved_page_list: List<vm_page_t>,
     pmm_node: Option<PmmNode>,
     vm_aspace_list: Option<VmAspaceList>,
     kernel_heap_base: usize,
     kernel_heap_size: usize,
     virtual_alloc: Option<VirtualAlloc>,
     heap: Option<Heap>,
+    stdout: Option<StdOut>,
 }
 
 impl BootContext {
     const fn _new() -> Self {
         Self {
+            reserve_ranges: Vec::<BootReserveRange>::new(),
+            periph_ranges: Vec::<PeriphRange>::new(),
+            reserved_page_list: List::<vm_page_t>::new(),
             pmm_node: None,
             vm_aspace_list: None,
             kernel_heap_base: 0,
             kernel_heap_size: 0,
             virtual_alloc: None,
             heap: None,
+            stdout: Some(StdOut),
         }
     }
 
@@ -110,6 +122,21 @@ impl BootContext {
         panic!("NOT init virtual_alloc yet!");
     }
 
+    fn periph_ranges(&mut self) -> &mut Vec<PeriphRange> {
+        &mut self.periph_ranges
+    }
+
+    fn reserve_ranges(&mut self) -> &mut Vec<BootReserveRange> {
+        &mut self.reserve_ranges
+    }
+
+    fn reserved_page_list(&mut self) -> &mut List<vm_page_t> {
+        if self.reserved_page_list.is_initialized() {
+            return &mut self.reserved_page_list;
+        }
+        panic!("NOT init reserved page list yet!");
+    }
+
     fn pmm_node(&mut self) -> &mut PmmNode {
         if let Some(ret) = &mut self.pmm_node {
             return ret;
@@ -123,6 +150,14 @@ impl BootContext {
         }
         panic!("NOT init vm_aspaces_list yet!");
     }
+
+    fn stdout(&mut self) -> &mut StdOut {
+        if let Some(ret) = &mut self.stdout {
+            return ret;
+        }
+        panic!("NOT init stdout yet!");
+    }
+
 }
 
 pub struct WrapBootContext {
@@ -157,6 +192,24 @@ impl WrapBootContext {
         }
     }
 
+    fn periph_ranges(&self) -> &mut Vec<PeriphRange> {
+        unsafe {
+            (*self.data.get()).periph_ranges()
+        }
+    }
+
+    fn reserve_ranges(&self) -> &mut Vec<BootReserveRange> {
+        unsafe {
+            (*self.data.get()).reserve_ranges()
+        }
+    }
+
+    fn reserved_page_list(&self) -> &mut List<vm_page_t> {
+        unsafe {
+            (*self.data.get()).reserved_page_list()
+        }
+    }
+
     fn pmm_node(&self) -> &mut PmmNode {
         unsafe {
             (*self.data.get()).pmm_node()
@@ -166,6 +219,12 @@ impl WrapBootContext {
     fn aspaces(&self) -> &mut VmAspaceList {
         unsafe {
             (*self.data.get()).aspaces()
+        }
+    }
+
+    fn stdout(&self) -> &mut StdOut {
+        unsafe {
+            (*self.data.get()).stdout()
         }
     }
 }
@@ -280,11 +339,11 @@ fn dlog_init_early() {
 /* deal with any static constructors */
 fn call_constructors() {
     unsafe {
+        (*BOOT_CONTEXT.data.get()).reserved_page_list.init();
         (*BOOT_CONTEXT.data.get()).pmm_node = Some(PmmNode::new());
         let pmm_node = BOOT_CONTEXT.pmm_node();
         pmm_node.init();
     }
-    RESERVED_PAGE_LIST.lock().init();
 }
 
 fn arch_early_init() {

@@ -8,22 +8,17 @@
 
 use crate::errors::ErrNO;
 use crate::arch::mmu::{PAGE_IOREMAP, boot_map};
-use crate::{PAGE_SIZE, IS_PAGE_ALIGNED, IS_ALIGNED};
+use crate::{PAGE_SIZE, IS_PAGE_ALIGNED, IS_ALIGNED, BOOT_CONTEXT};
 use crate::{print, dprintf};
 use crate::{kernel_base_virt};
 use crate::debug::*;
 use crate::types::*;
-use alloc::vec::Vec;
-use spin::Mutex;
 use core::ptr::null_mut;
 use crate::{periph_tables_start, periph_tables_end, kernel_va_to_pa};
 use crate::arch::mmu::PageTable;
 use crate::paddr_to_physmap;
 
 pub const MAX_PERIPH_RANGES : usize = 4;
-
-/* peripheral ranges are just allocated below the kernel image. */
-static PERIPH_RANGES: Mutex<Vec<PeriphRange>> = Mutex::new(Vec::new());
 
 pub struct PeriphRange {
     pub base_phys:  paddr_t,
@@ -32,7 +27,7 @@ pub struct PeriphRange {
 }
 
 pub fn add_periph_range(base_phys: usize, length: usize) -> Result<(), ErrNO> {
-    let mut ranges = PERIPH_RANGES.lock();
+    let ranges = BOOT_CONTEXT.periph_ranges();
 
     if ranges.len() >= MAX_PERIPH_RANGES {
         return Err(ErrNO::OutOfRange);

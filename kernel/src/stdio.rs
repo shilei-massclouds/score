@@ -8,9 +8,8 @@
 
 #![allow(dead_code)]
 
-use spin::Mutex;
 use core::fmt;
-use crate::arch::sbi;
+use crate::{arch::sbi, BOOT_CONTEXT};
 use core::fmt::Write;
 
 #[macro_export]
@@ -56,8 +55,6 @@ impl fmt::Write for StdOut {
     }
 }
 
-pub static STDOUT: Mutex<StdOut> = Mutex::new(StdOut);
-
 pub fn _print(args: fmt::Arguments) {
-    STDOUT.lock().write_fmt(args).unwrap();
+    BOOT_CONTEXT.stdout().write_fmt(args).unwrap();
 }

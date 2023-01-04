@@ -7,7 +7,7 @@
  */
 
 use core::slice;
-use crate::{print, dprintf, ZX_ASSERT, IS_PAGE_ALIGNED, IS_ALIGNED};
+use crate::{print, dprintf, ZX_ASSERT, IS_PAGE_ALIGNED, IS_ALIGNED, BOOT_CONTEXT};
 use crate::debug::*;
 use crate::types::*;
 use alloc::vec::Vec;
@@ -17,17 +17,15 @@ use crate::platform::boot_reserve::boot_reserve_init;
 use crate::pmm::{MAX_ARENAS, ArenaInfo};
 use device_tree::{DeviceTree, Node};
 use crate::platform::periphmap::add_periph_range;
-use crate::platform::boot_reserve::{boot_reserve_add_range, RESERVE_RANGES};
+use crate::platform::boot_reserve::boot_reserve_add_range;
 use crate::pmm::pmm_add_arena;
-use crate::page::vm_page_t;
 use crate::{ROUNDUP_PAGE_SIZE, ROUNDUP};
 use crate::List;
 use crate::pmm::pmm_alloc_range;
-use spin::Mutex;
 use crate::vm_page_state;
 
 pub mod boot_reserve;
-mod periphmap;
+pub mod periphmap;
 
 pub const MAX_ZBI_MEM_RANGES: usize = 32;
 
@@ -136,14 +134,11 @@ fn dlog_bypass_init() {
 fn pmm_checker_init_from_cmdline() {
 }
 
-pub static RESERVED_PAGE_LIST: Mutex<List<vm_page_t>> =
-    Mutex::new(List::<vm_page_t>::new());
-
 fn boot_reserve_wire() -> Result<(), ErrNO> {
     let mut total_list = List::new();
     total_list.init();
     {
-        let res = RESERVE_RANGES.lock();
+        let res = BOOT_CONTEXT.reserve_ranges();
         for r in res.iter() {
             dprintf!(INFO, "PMM: boot reserve marking WIRED [{:x}, {:x}]\n",
                      r.pa, r.pa + r.len -1);
@@ -162,7 +157,7 @@ fn boot_reserve_wire() -> Result<(), ErrNO> {
         }
     }
 
-    RESERVED_PAGE_LIST.lock().splice(&mut total_list);
+    BOOT_CONTEXT.reserved_page_list().splice(&mut total_list);
     Ok(())
 }
 

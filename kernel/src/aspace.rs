@@ -23,7 +23,6 @@ use crate::debug::*;
 use crate::vm::*;
 use crate::{KERNEL_ASPACE_BASE, KERNEL_ASPACE_SIZE};
 use crate::{ErrNO, types::vaddr_t, ZX_ASSERT};
-use crate::allocator::boot_heap_mark_pages_in_use;
 use crate::pmm::pmm_alloc_page;
 use crate::vm_page_state;
 use crate::arch::mmu::arch_zero_page;
@@ -377,9 +376,6 @@ pub fn vm_init_preheap() -> Result<(), ErrNO> {
     kernel_aspace_init_preheap()?;
 
     vm_init_preheap_vmars();
-
-    /* mark the physical pages used by the boot time allocator */
-    boot_heap_mark_pages_in_use();
 
     // grab a page and mark it as the zero page
     let zero_page = pmm_alloc_page(0);
