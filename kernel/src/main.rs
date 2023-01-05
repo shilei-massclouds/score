@@ -24,10 +24,12 @@ use platform::periphmap::PeriphRange;
 use pmm::PmmNode;
 use stdio::StdOut;
 
+use crate::arch::topology::topology_init;
 use crate::debug::*;
 use crate::allocator::boot_heap_earliest_init;
 use crate::errors::ErrNO;
 use crate::defines::*;
+use crate::mp::mp_init;
 use crate::platform::platform_early_init;
 use crate::aspace::vm_init_preheap;
 use crate::klib::list::List;
@@ -68,6 +70,7 @@ mod page;
 mod vm_page_state;
 mod aspace;
 mod vm;
+mod mp;
 
 pub struct BootContext {
     reserve_ranges: Vec::<BootReserveRange>,
@@ -320,6 +323,16 @@ fn _lk_main() -> Result<(), ErrNO> {
     vm_init()?;
     // lk_primary_cpu_init_level(LK_INIT_LEVEL_VM, LK_INIT_LEVEL_TOPOLOGY - 1);
 
+    // initialize the system topology
+    dprintf!(SPEW, "initializing system topology\n");
+    topology_init()?;
+    // lk_primary_cpu_init_level(LK_INIT_LEVEL_TOPOLOGY, LK_INIT_LEVEL_KERNEL - 1);
+
+    // initialize other parts of the kernel
+    dprintf!(SPEW, "initializing kernel\n");
+    kernel_init()?;
+    // lk_primary_cpu_init_level(LK_INIT_LEVEL_KERNEL, LK_INIT_LEVEL_THREADING - 1);
+
     println!("lk_main ok!");
 
     ///////////////////////////
@@ -329,6 +342,11 @@ fn _lk_main() -> Result<(), ErrNO> {
     crate::tests::do_tests();
 
     Ok(())
+}
+
+fn kernel_init() -> Result<(), ErrNO> {
+    dprintf!(SPEW, "initializing mp\n");
+    mp_init()
 }
 
 /* get us into some sort of thread context so Thread::Current works. */
