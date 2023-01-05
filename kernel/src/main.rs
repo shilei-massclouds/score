@@ -23,6 +23,7 @@ use platform::boot_reserve::BootReserveRange;
 use platform::periphmap::PeriphRange;
 use pmm::PmmNode;
 use stdio::StdOut;
+use thread::ThreadArg;
 
 use crate::arch::topology::topology_init;
 use crate::debug::*;
@@ -34,6 +35,7 @@ use crate::platform::platform_early_init;
 use crate::aspace::vm_init_preheap;
 use crate::klib::list::List;
 use crate::allocator::heap_init;
+use crate::thread::{Thread, DEFAULT_PRIORITY};
 use crate::vm::vm_init;
 
 global_asm!(include_str!("arch/riscv64/start.S"));
@@ -71,6 +73,7 @@ mod vm_page_state;
 mod aspace;
 mod vm;
 mod mp;
+mod thread;
 
 pub struct BootContext {
     reserve_ranges: Vec::<BootReserveRange>,
@@ -333,6 +336,13 @@ fn _lk_main() -> Result<(), ErrNO> {
     kernel_init()?;
     // lk_primary_cpu_init_level(LK_INIT_LEVEL_KERNEL, LK_INIT_LEVEL_THREADING - 1);
 
+    // create a thread to complete system initialization
+    dprintf!(SPEW, "creating bootstrap completion thread\n");
+    let thread = Thread::create("bootstrap2", &bootstrap2, None,
+                                        DEFAULT_PRIORITY)?;
+    thread.detach();
+    thread.resume();
+
     println!("lk_main ok!");
 
     ///////////////////////////
@@ -342,6 +352,10 @@ fn _lk_main() -> Result<(), ErrNO> {
     crate::tests::do_tests();
 
     Ok(())
+}
+
+fn bootstrap2(_arg: Option<ThreadArg>) -> Result<(), ErrNO> {
+    todo!("bootstrap2!");
 }
 
 fn kernel_init() -> Result<(), ErrNO> {
