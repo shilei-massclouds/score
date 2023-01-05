@@ -8,6 +8,10 @@
 
 use alloc::vec::Vec;
 use spin::lazy::Lazy;
+use crate::BOOT_CONTEXT;
+use crate::ZX_ASSERT;
+use crate::arch::mmu::PAGE_READ;
+use crate::arch::mmu::PAGE_WRITE;
 use crate::errors::ErrNO;
 use crate::pmm::PmmArena;
 use crate::types::*;
@@ -17,12 +21,40 @@ use crate::pmm::pmm_alloc_range;
 use crate::klib::list::List;
 use crate::vm_page_state;
 
-#[allow(dead_code)]
-pub const ARCH_MMU_FLAG_CACHED:         usize = 0 << 0;
+pub const ARCH_MMU_FLAG_CACHED:     usize = 0 << 0;
+pub const _ARCH_MMU_FLAG_UNCACHED:   usize = 1 << 0;
+pub const ARCH_MMU_FLAG_UNCACHED_DEVICE: usize = 2 << 0;
+pub const _ARCH_MMU_FLAG_WRITE_COMBINING: usize = 3 << 0;
+pub const _ARCH_MMU_FLAG_CACHE_MASK: usize = 3 << 0;
+
 pub const _ARCH_MMU_FLAG_PERM_USER:      usize = 1 << 2;
 pub const ARCH_MMU_FLAG_PERM_READ:      usize = 1 << 3;
 pub const ARCH_MMU_FLAG_PERM_WRITE:     usize = 1 << 4;
 pub const ARCH_MMU_FLAG_PERM_EXECUTE:   usize = 1 << 5;
+
+// Permissions & flags for regions of the physmap that are not backed by memory; they
+// may represent MMIOs or non-allocatable (ACPI NVS) memory. The kernel may access
+// some peripherals in these addresses (such as MMIO-based UARTs) in early boot.
+pub const GAP_MMU_FLAGS: usize = ARCH_MMU_FLAG_PERM_READ |
+    ARCH_MMU_FLAG_PERM_WRITE | ARCH_MMU_FLAG_UNCACHED_DEVICE;
+
+pub fn mmu_prot_from_flags(mmu_flags: usize) -> prot_t {
+    let mask = ARCH_MMU_FLAG_PERM_READ | ARCH_MMU_FLAG_PERM_WRITE |
+        ARCH_MMU_FLAG_UNCACHED_DEVICE;
+    if (mmu_flags & !mask) != 0 {
+        panic!("bad flags: 0x{:x}", mmu_flags);
+    }
+
+    let mut prot = 0;
+    if (mmu_flags & ARCH_MMU_FLAG_PERM_READ) != 0 {
+        prot |= PAGE_READ;
+    }
+    if (mmu_flags & ARCH_MMU_FLAG_PERM_WRITE) != 0 {
+        prot |= PAGE_WRITE;
+    }
+
+    prot
+}
 
 /* List of the kernel program's various segments. */
 #[allow(dead_code)]
@@ -105,8 +137,19 @@ pub fn vm_init() -> Result<(), ErrNO> {
     Ok(())
 }
 
+// Protect the region [ |base|, |base| + |size| ) from the physmap.
+fn physmap_protect_region(base: vaddr_t, size: usize, mmu_flags: usize) {
+    ZX_ASSERT!(base % PAGE_SIZE == 0);
+    ZX_ASSERT!(size % PAGE_SIZE == 0);
+    let page_count = size / PAGE_SIZE;
+    dprintf!(INFO, "base=0x{:x}; page_count=0x{:x}\n", base, page_count);
+
+    let kernel_aspace = BOOT_CONTEXT.kernel_aspace();
+    let status = kernel_aspace.protect(base, page_count, mmu_flags);
+    ZX_ASSERT!(status.is_ok());
+}
+
 fn physmap_protect_non_arena_regions() {
-    /*
     // Create a buffer to hold the pmm_arena_info_t objects.
     let pmm_node = BOOT_CONTEXT.pmm_node();
     let physmap_protect_gap = |base: vaddr_t, size: usize| {
@@ -114,45 +157,41 @@ fn physmap_protect_non_arena_regions() {
         // on peripherals being mapped in.
         //
         // TODO(fxbug.dev/47856): Remove these regions completely.
-        physmap_protect_region(base, size, kGapMmuFlags);
+        physmap_protect_region(base, size, GAP_MMU_FLAGS);
     };
     physmap_for_each_gap(&physmap_protect_gap, pmm_node.get_arenas());
-    */
 }
 
-fn _physmap_for_each_gap<F>(_func: &F, _arenas: &Vec<PmmArena>)
+fn physmap_for_each_gap<F>(func: &F, arenas: &Vec<PmmArena>)
     where F: Fn(vaddr_t, usize) {
-}
-/*
-  // Iterate over the arenas and invoke |func| for the gaps between them.
-  //
-  // |gap_base| is the base address of the last identified gap.
-  vaddr_t gap_base = PHYSMAP_BASE;
-  for (unsigned i = 0; i < num_arenas; ++i) {
-    const vaddr_t arena_base = reinterpret_cast<vaddr_t>(paddr_to_physmap(arenas[i].base));
-    DEBUG_ASSERT(arena_base >= gap_base && arena_base % PAGE_SIZE == 0);
+    // Iterate over the arenas and invoke |func| for the gaps between them.
+    //
+    // |gap_base| is the base address of the last identified gap.
+    let mut gap_base = PHYSMAP_BASE;
+    for arena in arenas {
+        let arena_base = paddr_to_physmap(arena.base());
+        ZX_ASSERT!(arena_base >= gap_base && arena_base % PAGE_SIZE == 0);
 
-    const size_t arena_size = arenas[i].size;
-    DEBUG_ASSERT(arena_size > 0 && arena_size % PAGE_SIZE == 0);
+        let arena_size = arena.size();
+        ZX_ASSERT!(arena_size > 0 && arena_size % PAGE_SIZE == 0);
 
-    LTRACEF("gap_base=%" PRIx64 "; arena_base=%" PRIx64 "; arena_size=%" PRIx64 "\n", gap_base,
-            arena_base, arena_size);
+        dprintf!(SPEW, "gap_base=0x{:x}; arena_base=0x{:x}; arena_size=0x{:x}\n",
+                 gap_base, arena_base, arena_size);
 
-    const size_t gap_size = arena_base - gap_base;
-    if (gap_size > 0) {
-      func(gap_base, gap_size);
+        let gap_size = arena_base - gap_base;
+        if gap_size > 0 {
+            func(gap_base, gap_size);
+        }
+        gap_base = arena_base + arena_size;
     }
 
-    gap_base = arena_base + arena_size;
-  }
-
-  // Don't forget the last gap.
-  const vaddr_t physmap_end = PHYSMAP_BASE + PHYSMAP_SIZE;
-  const size_t gap_size = physmap_end - gap_base;
-  if (gap_size > 0) {
-    func(gap_base, gap_size);
-  }
-  */
+    // Don't forget the last gap.
+    let physmap_end = PHYSMAP_BASE + PHYSMAP_SIZE;
+    let gap_size = physmap_end - gap_base;
+    if gap_size > 0 {
+        func(gap_base, gap_size);
+    }
+}
 
 fn physmap_protect_arena_regions_noexecute() {
 }

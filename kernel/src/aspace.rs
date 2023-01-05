@@ -13,6 +13,7 @@ use crate::PTE_TO_PROT;
 use crate::arch::mmu::PAGE_KERNEL;
 use crate::arch::mmu::PageTable;
 use crate::arch::mmu::_swapper_pgd;
+use crate::arch::mmu::protect_pages;
 use crate::arch::mmu::vaddr_to_index;
 use crate::types::*;
 use alloc::vec::Vec;
@@ -193,6 +194,30 @@ impl VmAspace {
     pub fn unmap(&self, _va: vaddr_t, _count: usize, _enlarge: bool)
         -> Result<usize, ErrNO> {
         todo!("unmap!");
+    }
+
+    pub fn protect(&self, vaddr: vaddr_t, count: usize, mmu_flags: usize)
+        -> Result<(), ErrNO> {
+        if !self.is_valid_vaddr(vaddr) {
+            return Err(ErrNO::InvalidArgs);
+        }
+
+        if !IS_PAGE_ALIGNED!(vaddr) {
+            return Err(ErrNO::InvalidArgs);
+        }
+
+        if (mmu_flags & ARCH_MMU_FLAG_PERM_READ) == 0 {
+            return Err(ErrNO::InvalidArgs);
+        }
+
+        if (mmu_flags & ARCH_MMU_FLAG_PERM_EXECUTE) != 0 {
+            todo!("ARCH_MMU_FLAG_PERM_EXECUTE");
+        }
+
+        let prot = mmu_prot_from_flags(mmu_flags);
+        let status = protect_pages(vaddr, count * PAGE_SIZE, prot);
+        // MarkAspaceModified();
+        status
     }
 
     pub fn query(&self, va: vaddr_t) -> Result<(paddr_t, usize), ErrNO> {

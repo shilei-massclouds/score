@@ -10,6 +10,7 @@ use core::cmp::min;
 use core::ptr::null_mut;
 use core::arch::asm;
 use crate::BOOT_CONTEXT;
+use crate::println;
 use crate::types::*;
 use crate::defines::*;
 use crate::errors::ErrNO;
@@ -37,6 +38,9 @@ const _PAGE_USER    : usize = 1 << 4;     /* User */
 const _PAGE_GLOBAL  : usize = 1 << 5;     /* Global */
 const _PAGE_ACCESSED: usize = 1 << 6;     /* Accessed (set by hardware) */
 const _PAGE_DIRTY   : usize = 1 << 7;     /* Dirty (set by hardware)*/
+
+pub const PAGE_READ : usize = _PAGE_READ;
+pub const PAGE_WRITE: usize = _PAGE_WRITE;
 
 /*
  * when all of R/W/X are zero, the PTE is a pointer to the next level
@@ -293,6 +297,16 @@ pub unsafe fn arch_zero_page(va: vaddr_t) {
         in(reg) va,
         in(reg) (va + PAGE_SIZE),
     );
+}
+
+pub fn protect_pages(vaddr: vaddr_t, size: usize, prot: prot_t)
+    -> Result<(), ErrNO> {
+
+    /* Todo: NOT implement it yet! */
+    println!("Not implement protect pages in risc-v! \
+              [0x{:x}, 0x{:x}) prot 0x{:x}",
+             vaddr, vaddr + size, prot);
+    Ok(())
 }
 
 pub fn map_pages(vaddr: vaddr_t, paddr: paddr_t, size: usize, prot: prot_t)

@@ -442,7 +442,7 @@ impl PmmNode {
         self.arenas.len()
     }
 
-    pub fn _get_arenas(&self) -> &Vec<PmmArena> {
+    pub fn get_arenas(&self) -> &Vec<PmmArena> {
         &self.arenas
     }
 }
