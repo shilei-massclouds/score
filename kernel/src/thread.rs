@@ -6,6 +6,9 @@
  * at https://opensource.org/licenses/MIT
  */
 
+use core::arch::asm;
+use alloc::alloc::{alloc, Layout};
+
 use crate::{defines::ARCH_DEFAULT_STACK_SIZE, errors::ErrNO};
 
 // thread priority
@@ -122,4 +125,39 @@ impl Thread {
   kcounter_add(thread_resume_count, 1);
   */
     }
+}
+
+/* get us into some sort of thread context so Thread::Current works. */
+pub fn thread_init_early() {
+    unsafe {
+        let layout: Layout = Layout::new::<Thread>();
+        let init_thread = alloc(layout);
+        println!("init thread: {:?} 0x{:x}",
+                 init_thread, thread_get_current());
+        thread_set_current(init_thread as usize);
+        println!("init thread: then 0x{:x}",
+                 thread_get_current());
+    }
+}
+
+#[inline(always)]
+pub fn thread_set_current(current: usize) {
+    unsafe {
+        asm!(
+            "mv tp, a0",
+            in("a0") current
+        );
+    }
+}
+
+#[inline(always)]
+pub fn thread_get_current() -> usize {
+    let current: usize;
+    unsafe {
+        asm!(
+            "mv a0, tp",
+            out("a0") current
+        );
+    }
+    current
 }
