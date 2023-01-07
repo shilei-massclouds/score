@@ -75,6 +75,7 @@ mod vm;
 mod mp;
 mod thread;
 mod init;
+mod locking;
 
 pub struct BootContext {
     reserve_ranges: Vec::<BootReserveRange>,
@@ -338,11 +339,13 @@ fn _lk_main() -> Result<(), ErrNO> {
     // lk_primary_cpu_init_level(LK_INIT_LEVEL_KERNEL, LK_INIT_LEVEL_THREADING - 1);
 
     // create a thread to complete system initialization
+    /*
     dprintf!(SPEW, "creating bootstrap completion thread\n");
     let thread = Thread::create("bootstrap2", &bootstrap2, None,
                                         DEFAULT_PRIORITY)?;
     thread.detach();
     thread.resume();
+    */
 
     println!("lk_main ok!");
 

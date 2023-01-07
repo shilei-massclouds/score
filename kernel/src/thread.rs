@@ -9,7 +9,7 @@
 use core::arch::asm;
 use alloc::alloc::{alloc, Layout};
 
-use crate::{defines::ARCH_DEFAULT_STACK_SIZE, errors::ErrNO};
+use crate::{defines::ARCH_DEFAULT_STACK_SIZE, errors::ErrNO, klib::list::Linked};
 
 // thread priority
 const NUM_PRIORITIES: i32 = 32;
@@ -161,3 +161,5 @@ pub fn thread_get_current() -> usize {
     }
     current
 }
+
+pub type ThreadPtr = usize;
