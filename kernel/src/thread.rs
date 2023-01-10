@@ -7,6 +7,7 @@
  */
 
 use core::arch::asm;
+use core::sync::atomic::{AtomicU32, Ordering};
 use alloc::string::String;
 
 use crate::defines::ARCH_DEFAULT_STACK_SIZE;
@@ -78,11 +79,62 @@ impl ThreadInfo {
     }
 }
 
+pub struct PreemptionState {
+    // state_ contains three fields:
+    //
+    //  * a 15-bit preempt disable counter (bits 0-14)
+    //  * a 15-bit eager resched disable counter (bits 15-29)
+    //  * a 2-bit for TimesliceExtensionFlags (bits 30-31)
+    //
+    // This is a single field so that both counters and the flags can be compared
+    // against zero with a single memory access and comparison.
+    //
+    // state_'s counts are modified by interrupt handlers, but the counts are
+    // always restored to their original value before the interrupt handler
+    // returns, so modifications are not visible to the interrupted thread.
+    state: AtomicU32,
+}
+
+impl PreemptionState {
+    // Counters contained in state_ are limited to 15 bits.
+    const K_MAX_COUNT_VALUE: u32 = 0x7fff;
+    // The preempt disable count is in the lowest 15 bits.
+    const K_PREEMPT_DISABLE_MASK: u32 = Self::K_MAX_COUNT_VALUE;
+
+    const fn new() -> Self {
+        Self {
+            state: AtomicU32::new(0),
+        }
+    }
+
+    // PreemptDisable() increments the preempt disable counter for the current
+    // thread. While preempt disable is non-zero, preemption of the thread is
+    // disabled, including preemption from interrupt handlers. During this time,
+    // any call to Reschedule() will only record that a reschedule is pending, and
+    // won't do a context switch.
+    //
+    // Note that this does not disallow blocking operations (e.g.
+    // mutex.Acquire()). Disabling preemption does not prevent switching away from
+    // the current thread if it blocks.
+    //
+    // A call to PreemptDisable() must be matched by a later call to
+    // PreemptReenable() to decrement the preempt disable counter.
+    fn preempt_disable(&self) {
+        let old_state = self.state.fetch_add(1, Ordering::Relaxed);
+        ZX_ASSERT!(Self::preempt_disable_count(old_state) < Self::K_MAX_COUNT_VALUE);
+    }
+
+    fn preempt_disable_count(state: u32) -> u32 {
+        state & Self::K_PREEMPT_DISABLE_MASK
+    }
+}
+
 pub struct Thread {
     pub thread_info: ThreadInfo,
     queue_node: ListNode,
     name: String,
     pub sched_state: SchedulerState,
+    pub preemption_state: PreemptionState,
 }
 
 impl Linked<Thread> for Thread{
@@ -111,6 +163,7 @@ impl Thread {
             queue_node: ListNode::new(),
             name: String::new(),
             sched_state: SchedulerState::new(),
+            preemption_state: PreemptionState::new(),
         }
     }
 
@@ -238,7 +291,6 @@ pub fn thread_init_early() {
 
     /* Init the boot percpu data. */
     PerCPU::init_boot();
-    todo!("thread_init_early!");
 }
 
 /**
@@ -259,18 +311,23 @@ pub fn thread_construct_first(thread: *mut Thread, name: &str) {
     /* Setup the scheduler state. */
     Scheduler::init_first_thread(thread);
 
-    /*
-  // Start out with preemption disabled to avoid attempts to reschedule until
-  // threading is fulling enabled. This simplifies code paths shared between
-  // initialization and runtime (e.g. logging). Preemption is enabled when the
-  // idle thread for the current CPU is ready.
-  t->preemption_state().PreemptDisable();
+    /* Start out with preemption disabled to avoid attempts to reschedule
+     * until threading is fulling enabled. This simplifies code paths shared
+     * between initialization and runtime (e.g. logging). Preemption is enabled
+     * when the idle thread for the current CPU is ready. */
+    unsafe {
+        (*thread).preemption_state.preempt_disable();
+    }
 
-  arch_thread_construct_first(t);
+    arch_thread_construct_first(thread);
 
-    thread_list->push_front(t);
-    */
-    todo!("thread_construct_first!");
+    {
+        let mut thread_list = THREAD_LIST.lock();
+        thread_list.add_tail(thread);
+    }
+}
+
+fn arch_thread_construct_first(_t: *mut Thread) {
 }
 
 fn construct_thread(thread: *mut Thread, name: &str) {

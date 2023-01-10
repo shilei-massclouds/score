@@ -189,8 +189,6 @@ impl Scheduler {
             sched.runnable_fair_task_count += 1;
             sched.update_total_expected_runtime(ss.expected_runtime_ns);
         }
-
-        todo!("init_first_thread!");
     }
 
     fn init_thread(thread: *mut Thread, priority: usize) {
