@@ -14,8 +14,8 @@ use super::spinlock::RawSpinLock;
 
 pub struct Mutex<T: ?Sized> {
     owner: AtomicUsize,
-    wait_lock: RawSpinLock,
-    wait_list: Vec<ThreadPtr>,
+    _wait_lock: RawSpinLock,
+    _wait_list: Vec<ThreadPtr>,
     data: UnsafeCell<T>,
 }
 
@@ -29,8 +29,8 @@ impl<T> Mutex<T> {
     pub const fn new(t: T) -> Mutex<T> {
         Mutex {
             owner: AtomicUsize::new(0),
-            wait_lock: RawSpinLock::new(),
-            wait_list: Vec::new(),
+            _wait_lock: RawSpinLock::new(),
+            _wait_list: Vec::new(),
             data: UnsafeCell::new(t),
         }
     }

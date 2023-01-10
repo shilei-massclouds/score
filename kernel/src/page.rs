@@ -22,7 +22,7 @@ const _kLoanedStateIsLoanCancelled: u8 = 2;
 #[repr(C)]
 pub struct vm_page {
     /* linked node */
-    pub queue_node: ListNode,
+    queue_node: ListNode,
 
     /* read-only after being set up */
     paddr: paddr_t,  /* use paddr() accessor */

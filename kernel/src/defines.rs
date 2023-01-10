@@ -35,6 +35,8 @@ pub const HEAP_MAX_SIZE_MB: usize = _CONFIG_HEAP_MAX_SIZE_MB;
 pub const ARCH_HEAP_ALIGN_BITS: usize = _CONFIG_ARCH_HEAP_ALIGN_BITS;
 pub const ARCH_DEFAULT_STACK_SIZE: usize = 8192;
 
+pub const SMP_MAX_CPUS: usize = _CONFIG_NR_CPUS;
+
 /* Const units */
 pub const MB: usize = 1024 * 1024;
 

@@ -35,7 +35,7 @@ use crate::platform::platform_early_init;
 use crate::aspace::vm_init_preheap;
 use crate::klib::list::List;
 use crate::allocator::heap_init;
-use crate::thread::{Thread, DEFAULT_PRIORITY, thread_init_early};
+use crate::thread::thread_init_early;
 use crate::vm::vm_init;
 
 global_asm!(include_str!("arch/riscv64/start.S"));
@@ -76,6 +76,9 @@ mod mp;
 mod thread;
 mod init;
 mod locking;
+mod percpu;
+mod sched;
+mod cpu;
 
 pub struct BootContext {
     reserve_ranges: Vec::<BootReserveRange>,
@@ -358,7 +361,7 @@ fn _lk_main() -> Result<(), ErrNO> {
     Ok(())
 }
 
-fn bootstrap2(_arg: Option<ThreadArg>) -> Result<(), ErrNO> {
+fn _bootstrap2(_arg: Option<ThreadArg>) -> Result<(), ErrNO> {
     todo!("bootstrap2!");
 }
 

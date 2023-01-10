@@ -7,37 +7,116 @@
  */
 
 use core::arch::asm;
-use alloc::alloc::{alloc, Layout};
+use alloc::string::String;
 
-use crate::{defines::ARCH_DEFAULT_STACK_SIZE, errors::ErrNO, klib::list::Linked};
+use crate::defines::ARCH_DEFAULT_STACK_SIZE;
+use crate::errors::ErrNO;
+use crate::klib::list::{Linked, List, ListNode};
+use crate::locking::mutex::Mutex;
+use crate::ZX_ASSERT;
+use crate::percpu::PerCPU;
+use crate::arch::irq::arch_irqs_disabled;
+use crate::sched::{SchedulerState, Scheduler};
 
 // thread priority
-const NUM_PRIORITIES: i32 = 32;
+const NUM_PRIORITIES: usize = 32;
 
-const _LOWEST_PRIORITY:  i32 = 0;
-const _HIGHEST_PRIORITY: i32 = NUM_PRIORITIES - 1;
-const _DPC_PRIORITY:     i32 = NUM_PRIORITIES - 2;
-const _IDLE_PRIORITY:    i32 = _LOWEST_PRIORITY;
-const _LOW_PRIORITY:     i32 = NUM_PRIORITIES / 4;
-pub const DEFAULT_PRIORITY: i32 = NUM_PRIORITIES / 2;
-const _HIGH_PRIORITY:    i32 = (NUM_PRIORITIES / 4) * 3;
+const _LOWEST_PRIORITY:  usize = 0;
+pub const HIGHEST_PRIORITY: usize = NUM_PRIORITIES - 1;
+const _DPC_PRIORITY:     usize = NUM_PRIORITIES - 2;
+const _IDLE_PRIORITY:    usize = _LOWEST_PRIORITY;
+const _LOW_PRIORITY:     usize = NUM_PRIORITIES / 4;
+pub const _DEFAULT_PRIORITY: usize = NUM_PRIORITIES / 2;
+const _HIGH_PRIORITY:    usize = (NUM_PRIORITIES / 4) * 3;
 
 // stack size
 pub const _DEFAULT_STACK_SIZE: usize = ARCH_DEFAULT_STACK_SIZE;
 
-pub struct ThreadArg {
+pub const THREAD_FLAG_DETACHED: usize = 1 << 0;
+/*
+#define THREAD_FLAG_FREE_STRUCT              (1 << 1)
+#define THREAD_FLAG_IDLE                     (1 << 2)
+#define THREAD_FLAG_VCPU                     (1 << 3)
 
+#define THREAD_SIGNAL_KILL                   (1 << 0)
+#define THREAD_SIGNAL_SUSPEND                (1 << 1)
+#define THREAD_SIGNAL_POLICY_EXCEPTION       (1 << 2)
+*/
+
+#[allow(dead_code)]
+pub struct ThreadArg {
 }
 
-type ThreadStartEntry = dyn Fn(Option<ThreadArg>) -> Result<(), ErrNO>;
-type ThreadTrampolineEntry = dyn Fn();
+type _ThreadStartEntry = dyn Fn(Option<ThreadArg>) -> Result<(), ErrNO>;
+type _ThreadTrampolineEntry = dyn Fn();
+
+/*
+ * ThreadInfo is included in Thread at an offset of 0.
+ * This means that tp points to both ThreadInfo and Thread.
+ */
+pub struct ThreadInfo {
+    flags: usize,           /* low level flags */
+    _preempt_count: i32,     /* 0=>preemptible, <0=>BUG */
+    //kernel_sp: usize,     /* Kernel stack pointer */
+    //user_sp: usize,       /* User stack pointer */
+    pub cpu: usize,
+}
+
+impl ThreadInfo {
+    pub fn current() -> &'static mut ThreadInfo {
+        unsafe {
+            &mut *(thread_get_current() as *mut ThreadInfo)
+        }
+    }
+
+    const fn new() -> Self {
+        Self {
+            flags: 0,
+            _preempt_count: 0,
+            cpu: 0,
+        }
+    }
+}
 
 pub struct Thread {
+    pub thread_info: ThreadInfo,
+    queue_node: ListNode,
+    name: String,
+    pub sched_state: SchedulerState,
+}
+
+impl Linked<Thread> for Thread{
+    fn from_node(ptr: *mut ListNode) -> *mut Thread {
+        unsafe {
+            crate::container_of!(ptr, Thread, queue_node)
+        }
+    }
+
+    fn into_node(&mut self) -> *mut ListNode {
+        &mut (self.queue_node)
+    }
 }
 
 impl Thread {
-    pub fn create(name: &str, entry: &ThreadStartEntry, arg: Option<ThreadArg>,
-                  priority: i32) -> Result<Self, ErrNO> {
+    #[allow(dead_code)]
+    pub fn current() -> &'static mut Thread {
+        unsafe {
+            &mut *(thread_get_current() as *mut Thread)
+        }
+    }
+
+    pub const fn new() -> Self {
+        Self {
+            thread_info: ThreadInfo::new(),
+            queue_node: ListNode::new(),
+            name: String::new(),
+            sched_state: SchedulerState::new(),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn create(name: &str, entry: &_ThreadStartEntry, arg: Option<ThreadArg>,
+                  priority: usize) -> Result<Self, ErrNO> {
         Thread::create_etc(None, name, entry, arg, priority, None)
     }
 
@@ -70,13 +149,14 @@ impl Thread {
      *
      * @return  Pointer to thread object, or nullptr on failure.
      */
-    fn create_etc(_t: Option<&Thread>, _name: &str, _entry: &ThreadStartEntry,
-                  _arg: Option<ThreadArg>, _priority: i32,
-                  _alt_trampoline: Option<&ThreadTrampolineEntry>)
+    fn create_etc(_t: Option<&Thread>, _name: &str, _entry: &_ThreadStartEntry,
+                  _arg: Option<ThreadArg>, _priority: usize,
+                  _alt_trampoline: Option<&_ThreadTrampolineEntry>)
         -> Result<Self, ErrNO> {
         todo!("create_etc!");
     }
 
+    #[allow(dead_code)]
     pub fn detach(&self) {
         todo!("detach!");
         /*
@@ -105,6 +185,7 @@ impl Thread {
      * created with thread_create() or which has been suspended with
      * thread_suspend(). It can not fail.
      */
+    #[allow(dead_code)]
     pub fn resume(&self) {
         todo!("resume!");
         /*
@@ -125,18 +206,76 @@ impl Thread {
   kcounter_add(thread_resume_count, 1);
   */
     }
+
+    fn set_name(&mut self, name: &str) {
+        self.name = String::from(name);
+    }
+
+    #[allow(dead_code)]
+    fn detatched(&self) -> bool {
+        (self.thread_info.flags & THREAD_FLAG_DETACHED) != 0
+    }
+
+    fn set_detached(&mut self, detatched: bool) {
+        if detatched {
+            self.thread_info.flags |= THREAD_FLAG_DETACHED;
+        } else {
+            self.thread_info.flags &= !THREAD_FLAG_DETACHED;
+        }
+    }
+
+    pub fn sched_state(&mut self) -> &mut SchedulerState {
+        &mut self.sched_state
+    }
 }
 
 /* get us into some sort of thread context so Thread::Current works. */
 pub fn thread_init_early() {
+    ZX_ASSERT!(thread_get_current() == 0);
+
+    /* Initialize the thread list. */
+    THREAD_LIST.lock().init();
+
+    /* Init the boot percpu data. */
+    PerCPU::init_boot();
+    todo!("thread_init_early!");
+}
+
+/**
+ * @brief Construct a thread t around the current running state
+ *
+ * This should be called once per CPU initialization.  It will create
+ * a thread that is pinned to the current CPU and running at the
+ * highest priority.
+ */
+pub fn thread_construct_first(thread: *mut Thread, name: &str) {
+    ZX_ASSERT!(arch_irqs_disabled());
+
+    construct_thread(thread, name);
     unsafe {
-        let layout: Layout = Layout::new::<Thread>();
-        let init_thread = alloc(layout);
-        println!("init thread: {:?} 0x{:x}",
-                 init_thread, thread_get_current());
-        thread_set_current(init_thread as usize);
-        println!("init thread: then 0x{:x}",
-                 thread_get_current());
+        (*thread).set_detached(true);
+    }
+
+    /* Setup the scheduler state. */
+    Scheduler::init_first_thread(thread);
+
+    /*
+  // Start out with preemption disabled to avoid attempts to reschedule until
+  // threading is fulling enabled. This simplifies code paths shared between
+  // initialization and runtime (e.g. logging). Preemption is enabled when the
+  // idle thread for the current CPU is ready.
+  t->preemption_state().PreemptDisable();
+
+  arch_thread_construct_first(t);
+
+    thread_list->push_front(t);
+    */
+    todo!("thread_construct_first!");
+}
+
+fn construct_thread(thread: *mut Thread, name: &str) {
+    unsafe {
+        (*thread).set_name(name);
     }
 }
 
@@ -163,3 +302,5 @@ pub fn thread_get_current() -> usize {
 }
 
 pub type ThreadPtr = usize;
+
+pub static THREAD_LIST: Mutex<List<Thread>> = Mutex::new(List::<Thread>::new());

@@ -155,6 +155,7 @@ clear_bss_done:
     la t0, .Lpark
     csrw stvec, t0
 
+    li tp, 0
     /* Restore C environment */
     la sp, _boot_stack_top
 
