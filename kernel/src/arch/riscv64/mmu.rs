@@ -204,7 +204,7 @@ macro_rules! PA_TO_PFN {
 #[macro_export]
 macro_rules! PFN_TO_PA {
     ($pfn: expr) => {
-        (($pfn) << PAGE_SHIFT)
+        (($pfn) << crate::PAGE_SHIFT)
     }
 }
 

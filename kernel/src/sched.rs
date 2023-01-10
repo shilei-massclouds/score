@@ -9,7 +9,7 @@
 use core::ptr::null_mut;
 use crate::debug::*;
 
-use crate::thread::{Thread, HIGHEST_PRIORITY};
+use crate::thread::Thread;
 use crate::arch::smp::arch_curr_cpu_num;
 use crate::cpu::{cpu_num_t, cpu_mask_t, INVALID_CPU, CPU_MASK_ALL, cpu_num_to_mask};
 use crate::percpu::PERCPU_ARRAY;
@@ -161,7 +161,7 @@ impl Scheduler {
         let current_cpu = arch_curr_cpu_num();
 
         /* Construct our scheduler state and assign a "priority" */
-        Self::init_thread(thread, HIGHEST_PRIORITY);
+        Self::init_thread(thread, Thread::HIGHEST_PRIORITY);
 
         /* Fill out other details about the thread, making sure to assign it to
          * the current CPU with hard affinity. */
@@ -191,7 +191,7 @@ impl Scheduler {
         }
     }
 
-    fn init_thread(thread: *mut Thread, priority: usize) {
+    pub fn init_thread(thread: *mut Thread, priority: usize) {
         let weight = priority_to_weight(priority);
         let sched_state = unsafe { &mut (*thread).sched_state };
         let discipline = SchedDiscipline::Fair(SchedFairParams::new(weight));

@@ -38,5 +38,5 @@ macro_rules! ROUNDUP_PAGE_SIZE {
 
 #[macro_export]
 macro_rules! IS_PAGE_ALIGNED {
-    ($x: expr) => {IS_ALIGNED!($x, PAGE_SIZE)}
+    ($x: expr) => {IS_ALIGNED!($x, crate::PAGE_SIZE)}
 }

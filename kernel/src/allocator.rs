@@ -6,6 +6,9 @@
  * at https://opensource.org/licenses/MIT
  */
 
+use crate::vm::vm::{
+    ARCH_MMU_FLAG_CACHED, ARCH_MMU_FLAG_PERM_READ, ARCH_MMU_FLAG_PERM_WRITE
+};
 use crate::{debug::*, BOOT_CONTEXT};
 use crate::klib::cmpctmalloc::{cmpct_init, cmpct_free, cmpct_memalign};
 use alloc::alloc::{GlobalAlloc, Layout};
@@ -24,9 +27,6 @@ use crate::types::*;
 use crate::klib::list::{List, Linked};
 use crate::page::vm_page_t;
 use crate::pmm::{pmm_alloc_pages, pmm_alloc_contiguous, paddr_to_vm_page, pmm_free};
-use crate::vm::{
-    ARCH_MMU_FLAG_CACHED, ARCH_MMU_FLAG_PERM_READ, ARCH_MMU_FLAG_PERM_WRITE
-};
 
 extern crate alloc;
 
@@ -128,7 +128,6 @@ unsafe impl GlobalAlloc for GlobalAllocator {
                 (*self.early_stage.get()).alloc(layout)
             },
             AllocatorStage::Boot => {
-                println!("### layout {} {}", layout.size(), layout.align());
                 cmpct_memalign(layout.align(), layout.size())
             },
             AllocatorStage::_Normal => {

@@ -35,8 +35,8 @@ use crate::platform::platform_early_init;
 use crate::aspace::vm_init_preheap;
 use crate::klib::list::List;
 use crate::allocator::heap_init;
-use crate::thread::thread_init_early;
-use crate::vm::vm_init;
+use crate::thread::{thread_init_early, Thread};
+use crate::vm::vm::vm_init;
 
 global_asm!(include_str!("arch/riscv64/start.S"));
 
@@ -342,13 +342,11 @@ fn _lk_main() -> Result<(), ErrNO> {
     // lk_primary_cpu_init_level(LK_INIT_LEVEL_KERNEL, LK_INIT_LEVEL_THREADING - 1);
 
     // create a thread to complete system initialization
-    /*
     dprintf!(SPEW, "creating bootstrap completion thread\n");
-    let thread = Thread::create("bootstrap2", &bootstrap2, None,
-                                        DEFAULT_PRIORITY)?;
+    let thread = Thread::create("bootstrap2", bootstrap2, None,
+                                Thread::DEFAULT_PRIORITY)?;
     thread.detach();
     thread.resume();
-    */
 
     println!("lk_main ok!");
 
@@ -361,7 +359,7 @@ fn _lk_main() -> Result<(), ErrNO> {
     Ok(())
 }
 
-fn _bootstrap2(_arg: Option<ThreadArg>) -> Result<(), ErrNO> {
+fn bootstrap2(_arg: Option<ThreadArg>) -> Result<(), ErrNO> {
     todo!("bootstrap2!");
 }
 

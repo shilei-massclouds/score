@@ -6,11 +6,14 @@
  * at https://opensource.org/licenses/MIT
  */
 
+use core::alloc::Layout;
 use core::arch::asm;
+use core::mem;
+use core::ptr::null_mut;
 use core::sync::atomic::{AtomicU32, Ordering};
+use alloc::alloc::alloc;
 use alloc::string::String;
 
-use crate::defines::ARCH_DEFAULT_STACK_SIZE;
 use crate::errors::ErrNO;
 use crate::klib::list::{Linked, List, ListNode};
 use crate::locking::mutex::Mutex;
@@ -18,46 +21,44 @@ use crate::ZX_ASSERT;
 use crate::percpu::PerCPU;
 use crate::arch::irq::arch_irqs_disabled;
 use crate::sched::{SchedulerState, Scheduler};
+use crate::vm::kstack::KernelStack;
 
-// thread priority
-const NUM_PRIORITIES: usize = 32;
-
-const _LOWEST_PRIORITY:  usize = 0;
-pub const HIGHEST_PRIORITY: usize = NUM_PRIORITIES - 1;
-const _DPC_PRIORITY:     usize = NUM_PRIORITIES - 2;
-const _IDLE_PRIORITY:    usize = _LOWEST_PRIORITY;
-const _LOW_PRIORITY:     usize = NUM_PRIORITIES / 4;
-pub const _DEFAULT_PRIORITY: usize = NUM_PRIORITIES / 2;
-const _HIGH_PRIORITY:    usize = (NUM_PRIORITIES / 4) * 3;
-
-// stack size
-pub const _DEFAULT_STACK_SIZE: usize = ARCH_DEFAULT_STACK_SIZE;
-
-pub const THREAD_FLAG_DETACHED: usize = 1 << 0;
+pub const THREAD_FLAG_DETACHED:     u32 = 1 << 0;
+pub const THREAD_FLAG_FREE_STRUCT:  u32 = 1 << 1;
 /*
-#define THREAD_FLAG_FREE_STRUCT              (1 << 1)
-#define THREAD_FLAG_IDLE                     (1 << 2)
-#define THREAD_FLAG_VCPU                     (1 << 3)
+pub const THREAD_FLAG_IDLE                     (1 << 2)
+pub const THREAD_FLAG_VCPU                     (1 << 3)
 
-#define THREAD_SIGNAL_KILL                   (1 << 0)
-#define THREAD_SIGNAL_SUSPEND                (1 << 1)
-#define THREAD_SIGNAL_POLICY_EXCEPTION       (1 << 2)
+pub const THREAD_SIGNAL_KILL                   (1 << 0)
+pub const THREAD_SIGNAL_SUSPEND                (1 << 1)
+pub const THREAD_SIGNAL_POLICY_EXCEPTION       (1 << 2)
 */
 
 #[allow(dead_code)]
 pub struct ThreadArg {
 }
 
-type _ThreadStartEntry = dyn Fn(Option<ThreadArg>) -> Result<(), ErrNO>;
+impl ThreadArg {
+    const fn new() -> Self {
+        Self {
+        }
+    }
+}
+
+type ThreadStartEntry = fn(Option<ThreadArg>) -> Result<(), ErrNO>;
 type _ThreadTrampolineEntry = dyn Fn();
+
+fn dummy_thread_start_entry(_arg: Option<ThreadArg>) -> Result<(), ErrNO> {
+    panic!("Please implement it!");
+}
 
 /*
  * ThreadInfo is included in Thread at an offset of 0.
  * This means that tp points to both ThreadInfo and Thread.
  */
 pub struct ThreadInfo {
-    flags: usize,           /* low level flags */
-    _preempt_count: i32,     /* 0=>preemptible, <0=>BUG */
+    flags: u32,             /* low level flags */
+    _preempt_count: i32,    /* 0=>preemptible, <0=>BUG */
     //kernel_sp: usize,     /* Kernel stack pointer */
     //user_sp: usize,       /* User stack pointer */
     pub cpu: usize,
@@ -129,12 +130,36 @@ impl PreemptionState {
     }
 }
 
+// TaskState is responsible for running the task defined by
+// |entry(arg)|, and reporting its value to any joining threads.
+pub struct TaskState {
+    /* The Thread's entry point, and its argument. */
+    entry: ThreadStartEntry,
+    arg: Option<ThreadArg>,
+}
+
+impl TaskState {
+    const fn new() -> Self {
+        Self {
+            entry: dummy_thread_start_entry,
+            arg: None,
+        }
+    }
+
+    fn init(&mut self, entry: ThreadStartEntry, arg: Option<ThreadArg>) {
+        self.entry = entry;
+        self.arg = arg;
+    }
+}
+
 pub struct Thread {
     pub thread_info: ThreadInfo,
     queue_node: ListNode,
     name: String,
     pub sched_state: SchedulerState,
+    pub task_state: TaskState,
     pub preemption_state: PreemptionState,
+    pub stack: KernelStack,
 }
 
 impl Linked<Thread> for Thread{
@@ -150,6 +175,17 @@ impl Linked<Thread> for Thread{
 }
 
 impl Thread {
+    /* thread priority */
+    const NUM_PRIORITIES: usize = 32;
+
+    const _LOWEST_PRIORITY:  usize = 0;
+    pub const HIGHEST_PRIORITY: usize = Self::NUM_PRIORITIES - 1;
+    const _DPC_PRIORITY:     usize = Self::NUM_PRIORITIES - 2;
+    const _IDLE_PRIORITY:    usize = Self::_LOWEST_PRIORITY;
+    const _LOW_PRIORITY:     usize = Self::NUM_PRIORITIES / 4;
+    pub const DEFAULT_PRIORITY: usize = Self::NUM_PRIORITIES / 2;
+    const _HIGH_PRIORITY:    usize = (Self::NUM_PRIORITIES / 4) * 3;
+
     #[allow(dead_code)]
     pub fn current() -> &'static mut Thread {
         unsafe {
@@ -163,14 +199,16 @@ impl Thread {
             queue_node: ListNode::new(),
             name: String::new(),
             sched_state: SchedulerState::new(),
+            task_state: TaskState::new(),
             preemption_state: PreemptionState::new(),
+            stack: KernelStack::new(),
         }
     }
 
     #[allow(dead_code)]
-    pub fn create(name: &str, entry: &_ThreadStartEntry, arg: Option<ThreadArg>,
+    pub fn create(name: &str, entry: ThreadStartEntry, arg: Option<ThreadArg>,
                   priority: usize) -> Result<Self, ErrNO> {
-        Thread::create_etc(None, name, entry, arg, priority, None)
+        Thread::create_etc(null_mut(), name, entry, arg, priority, None)
     }
 
     /*
@@ -202,10 +240,37 @@ impl Thread {
      *
      * @return  Pointer to thread object, or nullptr on failure.
      */
-    fn create_etc(_t: Option<&Thread>, _name: &str, _entry: &_ThreadStartEntry,
-                  _arg: Option<ThreadArg>, _priority: usize,
+    fn create_etc(mut thread: *mut Thread, name: &str,
+                  entry: ThreadStartEntry, arg: Option<ThreadArg>,
+                  priority: usize,
                   _alt_trampoline: Option<&_ThreadTrampolineEntry>)
-        -> Result<Self, ErrNO> {
+        -> Result<Self, ErrNO>
+    {
+        let mut _flags: u32 = 0;
+
+        if thread == null_mut() {
+            let layout = Layout::new::<Thread>();
+            thread = unsafe { alloc(layout) as *mut Thread };
+            if thread.is_null() {
+                panic!("Out of memory!");
+            }
+            _flags |= THREAD_FLAG_FREE_STRUCT;
+        }
+
+        /* thread is at least as aligned as the thread is supposed to be */
+        ZX_ASSERT!(IS_ALIGNED!(thread as usize, mem::align_of::<Thread>()));
+
+        construct_thread(thread, name);
+
+        unsafe {
+            (*thread).task_state.init(entry, arg);
+        }
+        Scheduler::init_thread(thread, priority);
+
+        unsafe {
+            (*thread).stack.init()?;
+        }
+
         todo!("create_etc!");
     }
 
