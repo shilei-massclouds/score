@@ -11,12 +11,12 @@
 #![feature(alloc_error_handler)]
 #![feature(const_mut_refs)]
 #![feature(const_nonnull_new)]
+#![feature(negative_impls)]
 
 use core::arch::global_asm;
 use core::cell::UnsafeCell;
 use alloc::vec::Vec;
 use allocator::VirtualAlloc;
-use aspace::{VmAspaceList, VmAspace};
 use klib::cmpctmalloc::Heap;
 use page::vm_page_t;
 use platform::boot_reserve::BootReserveRange;
@@ -85,7 +85,6 @@ pub struct BootContext {
     periph_ranges: Vec::<PeriphRange>,
     reserved_page_list: List<vm_page_t>,
     pmm_node: Option<PmmNode>,
-    vm_aspace_list: Option<VmAspaceList>,
     kernel_heap_base: usize,
     kernel_heap_size: usize,
     virtual_alloc: Option<VirtualAlloc>,
@@ -100,24 +99,12 @@ impl BootContext {
             periph_ranges: Vec::<PeriphRange>::new(),
             reserved_page_list: List::<vm_page_t>::new(),
             pmm_node: None,
-            vm_aspace_list: None,
             kernel_heap_base: 0,
             kernel_heap_size: 0,
             virtual_alloc: None,
             heap: None,
             stdout: Some(StdOut),
         }
-    }
-
-    fn get_aspace_by_id(&mut self, id: usize) -> &mut VmAspace {
-        if let Some(aspaces) = &mut self.vm_aspace_list {
-            return aspaces.get_aspace_by_id(id);
-        }
-        panic!("NOT init aspaces yet!");
-    }
-
-    fn kernel_aspace(&mut self) -> &mut VmAspace {
-        self.get_aspace_by_id(0)
     }
 
     fn heap(&mut self) -> &mut Heap {
@@ -156,13 +143,6 @@ impl BootContext {
         panic!("NOT init pmm node yet!");
     }
 
-    fn aspaces(&mut self) -> &mut VmAspaceList {
-        if let Some(ret) = &mut self.vm_aspace_list {
-            return ret;
-        }
-        panic!("NOT init vm_aspaces_list yet!");
-    }
-
     fn stdout(&mut self) -> &mut StdOut {
         if let Some(ret) = &mut self.stdout {
             return ret;
@@ -198,12 +178,6 @@ impl WrapBootContext {
         }
     }
 
-    fn kernel_aspace(&self) -> &mut VmAspace {
-        unsafe {
-            (*self.data.get()).kernel_aspace()
-        }
-    }
-
     fn periph_ranges(&self) -> &mut Vec<PeriphRange> {
         unsafe {
             (*self.data.get()).periph_ranges()
@@ -225,12 +199,6 @@ impl WrapBootContext {
     fn pmm_node(&self) -> &mut PmmNode {
         unsafe {
             (*self.data.get()).pmm_node()
-        }
-    }
-
-    fn aspaces(&self) -> &mut VmAspaceList {
-        unsafe {
-            (*self.data.get()).aspaces()
         }
     }
 

@@ -8,6 +8,7 @@
 
 use crate::types::*;
 
+#[allow(dead_code)]
 pub fn memset(va: vaddr_t, value: u8, size: usize) {
     let ptr = va as *mut u8;
     for _i in 0..size {

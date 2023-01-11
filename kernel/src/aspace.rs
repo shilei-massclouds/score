@@ -6,6 +6,7 @@
  * at https://opensource.org/licenses/MIT
  */
 
+use core::alloc::Layout;
 use core::ptr::null_mut;
 
 use crate::BOOT_CONTEXT;
@@ -25,6 +26,10 @@ use crate::defines::PHYSMAP_BASE;
 use crate::defines::PHYSMAP_SIZE;
 use crate::defines::kernel_size;
 use crate::defines::paddr_to_physmap;
+use crate::klib::list::Linked;
+use crate::klib::list::List;
+use crate::klib::list::ListNode;
+use crate::locking::mutex::Mutex;
 use crate::types::*;
 use crate::vm::vm::ARCH_MMU_FLAG_PERM_EXECUTE;
 use crate::vm::vm::ARCH_MMU_FLAG_PERM_READ;
@@ -32,7 +37,6 @@ use crate::vm::vm::ARCH_MMU_FLAG_PERM_WRITE;
 use crate::vm::vm::kernel_regions_base;
 use crate::vm::vm::mmu_prot_from_flags;
 use crate::vm::vmar::VmAddressRegion;
-use alloc::vec::Vec;
 use crate::debug::*;
 use crate::{KERNEL_ASPACE_BASE, KERNEL_ASPACE_SIZE};
 use crate::{ErrNO, types::vaddr_t, ZX_ASSERT};
@@ -72,26 +76,6 @@ pub enum VmAspaceType {
     GuestPhysical,
 }
 
-pub struct VmAspaceList {
-    inner: Vec<VmAspace>,
-}
-
-impl VmAspaceList {
-    const fn new() -> Self {
-        Self {
-            inner: Vec::new(),
-        }
-    }
-
-    fn push(&mut self, aspace: VmAspace) {
-        self.inner.push(aspace);
-    }
-
-    pub fn get_aspace_by_id(&mut self, id: usize) -> &mut VmAspace {
-        &mut self.inner[id]
-    }
-}
-
 /* Map the given array of pages into the virtual address space starting at
  * |vaddr|, in the order they appear in |phys|.
  * If any address in the range [vaddr, vaddr + count * PAGE_SIZE) is already
@@ -108,6 +92,7 @@ pub enum ExistingEntryAction {
 
 #[allow(dead_code)]
 pub struct VmAspace {
+    queue_node: ListNode,
     id: usize,
     as_type: VmAspaceType,
     base: vaddr_t,
@@ -115,27 +100,31 @@ pub struct VmAspace {
     root_vmar: Option<VmAddressRegion>,
 }
 
-impl VmAspace {
-    fn new(id: usize, as_type: VmAspaceType,
-        base: vaddr_t, size: usize) -> Self {
-        Self {
-            id,
-            as_type,
-            base,
-            size,
-            root_vmar: None,
+impl Linked<VmAspace> for VmAspace {
+    fn from_node(ptr: *mut ListNode) -> *mut VmAspace {
+        unsafe {
+            crate::container_of!(ptr, VmAspace, queue_node)
         }
     }
 
-    fn init(&self) -> Result<(), ErrNO> {
+    fn into_node(&mut self) -> *mut ListNode {
+        &mut (self.queue_node)
+    }
+}
+
+impl VmAspace {
+    fn init(&mut self, id: usize, as_type: VmAspaceType,
+            base: vaddr_t, size: usize) {
+        self.queue_node.init();
+        self.id = id;
+        self.as_type = as_type;
+        self.base = base;
+        self.size = size;
+        self.root_vmar = None;
+
         /* initialize the architecturally specific part */
         /* zx_status_t status = arch_aspace_.Init()?; */
         /* InitializeAslr(); */
-
-        if let None = self.root_vmar {
-            todo!("CreateRootLocked for userspace!");
-        }
-        Ok(())
     }
 
     fn get_root_vmar(&mut self) -> &mut VmAddressRegion {
@@ -265,6 +254,9 @@ impl VmAspace {
 }
 
 pub fn vm_init_preheap() -> Result<(), ErrNO> {
+    ASPACE_LIST.lock().init();
+    println!("vm_init_preheap");
+
     /* allow the vmm a shot at initializing some of its data structures */
     kernel_aspace_init_preheap()?;
 
@@ -298,12 +290,10 @@ fn vm_init_preheap_vmars() {
     let mut kernel_physmap_vmar= VmAddressRegion::new();
     kernel_physmap_vmar.init(PHYSMAP_BASE, PHYSMAP_SIZE, flags);
 
-    let mut ctx;
-    unsafe {
-        ctx = &mut (*BOOT_CONTEXT.data.get());
-    }
-    let kernel_aspace = ctx.kernel_aspace();
-    let root_vmar = kernel_aspace.get_root_vmar();
+    let aspace_list = ASPACE_LIST.lock();
+    println!("vm_init_preheap_vmars");
+    let kernel_aspace = aspace_list.head();
+    let root_vmar = unsafe { (*kernel_aspace).get_root_vmar() };
 
     root_vmar.insert_child(kernel_physmap_vmar);
 
@@ -349,30 +339,31 @@ fn vm_init_preheap_vmars() {
              kernel_heap_vmar.base, kernel_heap_vmar.base + kernel_heap_vmar.size);
     root_vmar.insert_child(kernel_heap_vmar);
 
-    ctx.kernel_heap_base = kernel_heap_base;
-    ctx.kernel_heap_size = heap_bytes;
+    unsafe {
+        let ctx = &mut (*BOOT_CONTEXT.data.get());
+        ctx.kernel_heap_base = kernel_heap_base;
+        ctx.kernel_heap_size = heap_bytes;
+    }
 }
 
 fn kernel_aspace_init_preheap() -> Result<(), ErrNO> {
-    let mut kernel_aspace =
-        VmAspace::new(0, VmAspaceType::Kernel,
-            KERNEL_ASPACE_BASE, KERNEL_ASPACE_SIZE);
-
     let flags = VMAR_FLAG_CAN_MAP_SPECIFIC | VMAR_CAN_RWX_FLAGS;
     let mut root_vmar = VmAddressRegion::new();
     root_vmar.init(KERNEL_ASPACE_BASE, KERNEL_ASPACE_SIZE, flags);
 
-    kernel_aspace.root_vmar = Some(root_vmar);
-    kernel_aspace.init()?;
-
+    let layout = Layout::new::<VmAspace>();
+    use alloc::alloc::alloc;
+    let kernel_aspace = unsafe { alloc(layout) as *mut VmAspace };
     unsafe {
-        (*BOOT_CONTEXT.data.get()).vm_aspace_list = Some(VmAspaceList::new());
+        (*kernel_aspace).init(0, VmAspaceType::Kernel,
+                              KERNEL_ASPACE_BASE, KERNEL_ASPACE_SIZE);
+        (*kernel_aspace).root_vmar = Some(root_vmar);
     }
 
-    let aspaces = BOOT_CONTEXT.aspaces();
-    aspaces.push(kernel_aspace);
+    let mut aspace_list = ASPACE_LIST.lock();
+    println!("kernel_aspace_init_preheap");
+    aspace_list.add_head(kernel_aspace);
     dprintf!(INFO, "kernel_aspace_init_preheap ok!\n");
-
     Ok(())
 }
 
@@ -388,3 +379,5 @@ pub fn vm_get_kernel_heap_size() -> usize {
         (*BOOT_CONTEXT.data.get()).kernel_heap_size
     }
 }
+
+pub static ASPACE_LIST: Mutex<List<VmAspace>> = Mutex::new(List::<VmAspace>::new());

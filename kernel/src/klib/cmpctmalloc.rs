@@ -9,7 +9,6 @@
 use core::{mem, cmp};
 use core::ptr::null_mut;
 use crate::defines::BYTES_PER_USIZE;
-use crate::klib::memory::memset;
 use crate::{debug::*, BOOT_CONTEXT, ZX_ASSERT_MSG};
 use crate::types::vaddr_t;
 use crate::{errors::ErrNO, ZX_ASSERT, defines::{PAGE_SIZE, PAGE_SHIFT}};
@@ -430,7 +429,7 @@ pub fn cmpct_alloc(size: usize) -> *mut u8 {
         ret = create_allocation_header(head as vaddr_t, 0,
             (*head).header.size(), (*head).header.left);
     }
-    memset(ret, 0, size);
+    //memset(ret, 0, size);
     dprintf!(INFO, "cmpct_alloc 0x{:x} 0x{:x}...\n", size, ret);
     ret as *mut u8
 }

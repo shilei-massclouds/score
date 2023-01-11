@@ -7,7 +7,7 @@
  */
 
 use crate::errors::ErrNO;
-use crate::types::*;
+use crate::{types::*, ZX_ASSERT};
 use crate::defines::ARCH_DEFAULT_STACK_SIZE;
 
 use super::vmar::VmAddressRegion;
@@ -64,8 +64,18 @@ impl KernelStack {
 
 /* Allocates and maps a kernel stack with one page of padding
  * before and after the mapping. */
-fn allocate_map(_stype: StackType, _map: &KernelStackMapping)
+fn allocate_map(_stype: StackType, map: &KernelStackMapping)
     -> Result<(), ErrNO>
 {
+    /* assert that this mapping hasn't already be created */
+    ZX_ASSERT!(map.base == 0);
+    ZX_ASSERT!(map.size == 0);
+
+    /* get a handle to the root vmar */
+  /*
+  auto vmar = VmAspace::kernel_aspace()->RootVmar()->as_vm_address_region();
+  DEBUG_ASSERT(!!vmar);
+  */
+
     todo!("allocate_map!");
 }

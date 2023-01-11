@@ -11,14 +11,15 @@ use core::arch::asm;
 use core::mem;
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicU32, Ordering};
-use alloc::alloc::alloc;
+use alloc::alloc::{alloc, alloc_zeroed};
 use alloc::string::String;
 
+use crate::arch::smp::arch_curr_cpu_num;
 use crate::errors::ErrNO;
 use crate::klib::list::{Linked, List, ListNode};
 use crate::locking::mutex::Mutex;
 use crate::ZX_ASSERT;
-use crate::percpu::PerCPU;
+use crate::percpu::{PerCPU, BOOT_CPU_ID, PERCPU_ARRAY};
 use crate::arch::irq::arch_irqs_disabled;
 use crate::sched::{SchedulerState, Scheduler};
 use crate::vm::kstack::KernelStack;
@@ -39,7 +40,7 @@ pub struct ThreadArg {
 }
 
 impl ThreadArg {
-    const fn new() -> Self {
+    const fn _new() -> Self {
         Self {
         }
     }
@@ -156,13 +157,17 @@ pub struct Thread {
     pub thread_info: ThreadInfo,
     queue_node: ListNode,
     name: String,
+    percpu: *mut PerCPU,
     pub sched_state: SchedulerState,
     pub task_state: TaskState,
     pub preemption_state: PreemptionState,
     pub stack: KernelStack,
 }
 
-impl Linked<Thread> for Thread{
+unsafe impl Send for Thread {}
+unsafe impl Sync for Thread {}
+
+impl Linked<Thread> for Thread {
     fn from_node(ptr: *mut ListNode) -> *mut Thread {
         unsafe {
             crate::container_of!(ptr, Thread, queue_node)
@@ -198,11 +203,29 @@ impl Thread {
             thread_info: ThreadInfo::new(),
             queue_node: ListNode::new(),
             name: String::new(),
+            percpu: null_mut(),
             sched_state: SchedulerState::new(),
             task_state: TaskState::new(),
             preemption_state: PreemptionState::new(),
             stack: KernelStack::new(),
         }
+    }
+
+    pub fn percpu(&self) -> &mut PerCPU {
+        ZX_ASSERT!(!self.percpu.is_null());
+        unsafe { &mut (*self.percpu) }
+    }
+
+    #[allow(dead_code)]
+    pub fn percpu_ptr(&self) -> *mut PerCPU {
+        ZX_ASSERT!(!self.percpu.is_null());
+        self.percpu
+    }
+
+    #[allow(dead_code)]
+    pub fn set_percpu_ptr(&mut self, ptr: *mut PerCPU) {
+        ZX_ASSERT!(self.percpu.is_null());
+        self.percpu = ptr;
     }
 
     #[allow(dead_code)]
@@ -349,13 +372,31 @@ impl Thread {
 
 /* get us into some sort of thread context so Thread::Current works. */
 pub fn thread_init_early() {
-    ZX_ASSERT!(thread_get_current() == 0);
+    construct_boot_percpu();
+
+    ZX_ASSERT!(arch_curr_cpu_num() == 0);
 
     /* Initialize the thread list. */
     THREAD_LIST.lock().init();
 
     /* Init the boot percpu data. */
     PerCPU::init_boot();
+}
+
+fn construct_boot_percpu() {
+    let layout = Layout::new::<PerCPU>();
+    unsafe {
+        let boot_percpu = alloc_zeroed(layout) as *mut PerCPU;
+        (*boot_percpu).init();
+
+        let t = (*boot_percpu).idle_thread_ptr();
+        (*t).thread_info.cpu = BOOT_CPU_ID;
+        (*t).percpu = boot_percpu;
+        thread_set_current(t as usize);
+
+        let mut percpu_array = PERCPU_ARRAY.lock();
+        percpu_array.set(BOOT_CPU_ID, boot_percpu);
+    }
 }
 
 /**

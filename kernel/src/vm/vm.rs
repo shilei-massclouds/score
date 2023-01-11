@@ -12,6 +12,7 @@ use crate::BOOT_CONTEXT;
 use crate::ZX_ASSERT;
 use crate::arch::mmu::PAGE_READ;
 use crate::arch::mmu::PAGE_WRITE;
+use crate::aspace::ASPACE_LIST;
 use crate::errors::ErrNO;
 use crate::pmm::PmmArena;
 use crate::types::*;
@@ -144,9 +145,14 @@ fn physmap_protect_region(base: vaddr_t, size: usize, mmu_flags: usize) {
     let page_count = size / PAGE_SIZE;
     dprintf!(INFO, "base=0x{:x}; page_count=0x{:x}\n", base, page_count);
 
-    let kernel_aspace = BOOT_CONTEXT.kernel_aspace();
-    let status = kernel_aspace.protect(base, page_count, mmu_flags);
-    ZX_ASSERT!(status.is_ok());
+    {
+        let aspace_list = ASPACE_LIST.lock();
+        let kernel_aspace = aspace_list.head();
+        unsafe {
+            let status = (*kernel_aspace).protect(base, page_count, mmu_flags);
+            ZX_ASSERT!(status.is_ok());
+        }
+    }
 }
 
 fn physmap_protect_non_arena_regions() {

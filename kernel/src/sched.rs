@@ -12,7 +12,6 @@ use crate::debug::*;
 use crate::thread::Thread;
 use crate::arch::smp::arch_curr_cpu_num;
 use crate::cpu::{cpu_num_t, cpu_mask_t, INVALID_CPU, CPU_MASK_ALL, cpu_num_to_mask};
-use crate::percpu::PERCPU_ARRAY;
 
 type SchedWeight = usize;
 type SchedDuration = usize;
@@ -175,20 +174,17 @@ impl Scheduler {
         /* Finally, make sure that the thread is the active thread
          * for the scheduler, and that the weight_total bookkeeping
          * is accurate. */
-        {
-            let mut percpu_array = unsafe { PERCPU_ARRAY.lock() };
-            let percpu = percpu_array.get(current_cpu);
-            let sched = percpu.scheduler();
-            ss.active = true;
-            sched.active_thread = thread;
-            if let SchedDiscipline::Fair(params) = &ss.discipline {
-                sched.weight_total = params.weight;
-            } else {
-                panic!("Bad discipline! Only support fair!");
-            }
-            sched.runnable_fair_task_count += 1;
-            sched.update_total_expected_runtime(ss.expected_runtime_ns);
+        let percpu = unsafe { (*thread).percpu() };
+        let sched = percpu.scheduler();
+        ss.active = true;
+        sched.active_thread = thread;
+        if let SchedDiscipline::Fair(params) = &ss.discipline {
+            sched.weight_total = params.weight;
+        } else {
+            panic!("Bad discipline! Only support fair!");
         }
+        sched.runnable_fair_task_count += 1;
+        sched.update_total_expected_runtime(ss.expected_runtime_ns);
     }
 
     pub fn init_thread(thread: *mut Thread, priority: usize) {

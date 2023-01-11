@@ -6,23 +6,25 @@
  * at https://opensource.org/licenses/MIT
  */
 
-use crate::{config_generated::_CONFIG_NR_CPUS, locking::mutex::Mutex, thread::{Thread, thread_construct_first, thread_set_current}, sched::Scheduler};
+use core::ptr::null_mut;
 
-const BOOT_CPU_ID: usize = 0;
+use crate::ZX_ASSERT;
+use crate::config_generated::_CONFIG_NR_CPUS;
+use crate::locking::mutex::Mutex;
+use crate::thread::{Thread, thread_construct_first};
+use crate::sched::Scheduler;
+
+pub const BOOT_CPU_ID: usize = 0;
 
 pub struct PerCPU {
-    scheduler: Scheduler,
     idle_thread: Thread,
+    scheduler: Scheduler,
 }
 
 impl PerCPU {
-    const INIT_VAL: PerCPU = PerCPU::new();
-
-    const fn new() -> Self {
-        Self {
-            scheduler: Scheduler::new(),
-            idle_thread: Thread::new(),
-        }
+    pub fn init(&mut self) {
+        self.scheduler = Scheduler::new();
+        self.idle_thread = Thread::new();
     }
 
     pub fn idle_thread_ptr(&mut self) -> *mut Thread {
@@ -33,12 +35,7 @@ impl PerCPU {
         let mut percpu_array = unsafe { PERCPU_ARRAY.lock() };
         let boot_percpu = percpu_array.get(BOOT_CPU_ID);
         boot_percpu.scheduler.this_cpu = BOOT_CPU_ID;
-
         let t = boot_percpu.idle_thread_ptr();
-        unsafe {
-            (*t).thread_info.cpu = BOOT_CPU_ID;
-        }
-        thread_set_current(t as usize);
 
         /* create a thread to cover the current running state */
         thread_construct_first(t, "bootstrap");
@@ -49,19 +46,27 @@ impl PerCPU {
     }
 }
 
+type PerCPUPtr = *mut PerCPU;
+
 pub struct PerCPUArray {
-    data: [PerCPU; _CONFIG_NR_CPUS],
+    data: [PerCPUPtr; _CONFIG_NR_CPUS],
 }
 
 impl PerCPUArray {
     const fn new() -> Self {
         Self {
-            data: [PerCPU::INIT_VAL; _CONFIG_NR_CPUS],
+            data: [null_mut(); _CONFIG_NR_CPUS],
         }
     }
 
     pub fn get(&mut self, index: usize) -> &mut PerCPU {
-        &mut self.data[index]
+        let ptr = self.data[index];
+        ZX_ASSERT!(!ptr.is_null());
+        unsafe { &mut (*ptr) }
+    }
+
+    pub fn set(&mut self, index: usize, percpu_ptr: PerCPUPtr) {
+        self.data[index] = percpu_ptr;
     }
 }
 

@@ -20,7 +20,7 @@ use crate::vm_page_state::{self, *};
 use crate::defines::{_boot_heap, _boot_heap_end, BYTES_PER_USIZE};
 use crate::ARCH_HEAP_ALIGN_BITS;
 use crate::aspace::{
-    vm_get_kernel_heap_base, vm_get_kernel_heap_size, ExistingEntryAction
+    vm_get_kernel_heap_base, vm_get_kernel_heap_size, ExistingEntryAction, ASPACE_LIST
 };
 use crate::{ErrNO, PAGE_SHIFT, PAGE_SIZE, BYTE_BITS, ZX_ASSERT};
 use crate::types::*;
@@ -320,9 +320,13 @@ impl VirtualAlloc {
             }
 
             unsafe {
-                let mapped = (*BOOT_CONTEXT.data.get()).get_aspace_by_id(0).map(
-                    va + mapped_count * PAGE_SIZE, &paddrs[..], map_pages,
-                    mmu_flags, ExistingEntryAction::Error)?;
+                let aspace_list = ASPACE_LIST.lock();
+                println!("alloc_map_pages");
+                let kernel_aspace = aspace_list.head();
+                let mapped =
+                    (*kernel_aspace).map(va + mapped_count * PAGE_SIZE,
+                                         &paddrs[..], map_pages, mmu_flags,
+                                         ExistingEntryAction::Error)?;
                 ZX_ASSERT!(mapped == map_pages);
             }
 
@@ -403,12 +407,16 @@ impl VirtualAlloc {
         let mut free_list = List::<vm_page_t>::new();
         free_list.init();
         dprintf!(INFO, "Unmapping {} pages at 0x{:x}\n", pages, va);
+        let aspace_list = ASPACE_LIST.lock();
+        println!("unmap_free_pages");
+        let kernel_aspace = aspace_list.head();
+
         for i in 0..pages {
-            let (pa, _) = BOOT_CONTEXT.kernel_aspace().query(va + i * PAGE_SIZE)?;
+            let (pa, _) = unsafe { (*kernel_aspace).query(va + i * PAGE_SIZE)? };
             let page = paddr_to_vm_page(pa);
             free_list.add_tail(page);
         }
-        let unmapped = BOOT_CONTEXT.kernel_aspace().unmap(va, pages, false)?;
+        let unmapped = unsafe { (*kernel_aspace).unmap(va, pages, false)? };
         ZX_ASSERT!(unmapped == pages);
         pmm_free(&free_list);
 

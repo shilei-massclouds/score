@@ -15,6 +15,7 @@ pub type cpu_num_t = usize;
 pub type cpu_mask_t = usize;
 
 pub const INVALID_CPU: usize = usize::MAX;
+#[allow(dead_code)]
 pub const CPU_MASK_ALL: usize = usize::MAX;
 
 pub const fn is_valid_cpu_num(num: cpu_num_t) -> bool {
