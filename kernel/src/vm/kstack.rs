@@ -6,8 +6,12 @@
  * at https://opensource.org/licenses/MIT
  */
 
+use crate::ZX_ASSERT;
+use crate::pmm::PMM_ALLOC_FLAG_ANY;
+use crate::types::*;
+use crate::aspace::ASPACE_LIST;
 use crate::errors::ErrNO;
-use crate::{types::*, ZX_ASSERT};
+use crate::vm::vm_object_paged::VmObjectPaged;
 use crate::defines::ARCH_DEFAULT_STACK_SIZE;
 
 use super::vmar::VmAddressRegion;
@@ -64,7 +68,7 @@ impl KernelStack {
 
 /* Allocates and maps a kernel stack with one page of padding
  * before and after the mapping. */
-fn allocate_map(_stype: StackType, map: &KernelStackMapping)
+fn allocate_map(stype: StackType, map: &KernelStackMapping)
     -> Result<(), ErrNO>
 {
     /* assert that this mapping hasn't already be created */
@@ -72,10 +76,16 @@ fn allocate_map(_stype: StackType, map: &KernelStackMapping)
     ZX_ASSERT!(map.size == 0);
 
     /* get a handle to the root vmar */
-  /*
-  auto vmar = VmAspace::kernel_aspace()->RootVmar()->as_vm_address_region();
-  DEBUG_ASSERT(!!vmar);
-  */
+    let aspace_list = ASPACE_LIST.lock();
+    let kernel_aspace = aspace_list.head();
+    unsafe {
+        let vmar = (*kernel_aspace).root_vmar();
+        /* Create a VMO for our stack */
+        let stack_vmo = VmObjectPaged::create(PMM_ALLOC_FLAG_ANY,
+                                              VmObjectPaged::K_ALWAYS_PINNED,
+                                              stype.size)?;
+        (*stack_vmo).set_name(stype.name);
+    }
 
     todo!("allocate_map!");
 }

@@ -27,8 +27,22 @@ use crate::platform::boot_reserve::{
 };
 
 /* flags for allocation routines below */
-pub const PMM_ALLOC_FLAG_ANY: usize = 0 << 0;   /* no restrictions on which
-                                                   arena to allocate from */
+
+/* no restrictions on which arena to allocate from */
+pub const PMM_ALLOC_FLAG_ANY: u32 = 0 << 0;
+/* allocate only from arenas marked LO_MEM */
+pub const PMM_ALLOC_FLAG_LO_MEM: u32 = 1 << 0;
+// The caller is able to wait and retry this allocation and so pmm allocation functions are allowed
+// to return ZX_ERR_SHOULD_WAIT, as opposed to ZX_ERR_NO_MEMORY, to indicate that the caller should
+// wait and try again. This is intended for the PMM to tell callers who are able to wait that memory
+// is low. The caller should not infer anything about memory state if it is told to wait, as the PMM
+// may tell it to wait for any reason.
+pub const PMM_ALLOC_FLAG_CAN_WAIT: u32 = 1 << 1;
+// The default (flag not set) is to not allocate a loaned page, so that we don't end up with loaned
+// pages allocated for arbitrary purposes that prevent us from getting the loaned page back quickly.
+pub const PMM_ALLOC_FLAG_CAN_BORROW: u32 = 1 << 2;
+// Require a loaned page, and fail to allocate if a loaned page isn't available.
+pub const PMM_ALLOC_FLAG_MUST_BORROW: u32 = 1 << 3;
 
 /* all of the configured memory arenas */
 pub const MAX_ARENAS: usize = 16;
@@ -343,7 +357,7 @@ impl PmmNode {
         Ok(())
     }
 
-    fn alloc_page(&mut self, _flags: usize) -> *mut vm_page_t {
+    fn alloc_page(&mut self, _flags: u32) -> *mut vm_page_t {
         let page = self.free_list.pop_head();
         unsafe {
             dprintf!(INFO, "alloc page: pa {:x}\n", (*page).paddr());
@@ -354,7 +368,7 @@ impl PmmNode {
         page
     }
 
-    fn alloc_pages(&mut self, mut count: usize, alloc_flags: usize,
+    fn alloc_pages(&mut self, mut count: usize, alloc_flags: u32,
                    list: &mut List<vm_page_t>)
         -> Result<(), ErrNO> {
 
@@ -452,11 +466,11 @@ pub fn pmm_alloc_range(pa: paddr_t, count: usize, list: &mut List<vm_page_t>)
     BOOT_CONTEXT.pmm_node().alloc_range(pa, count, list)
 }
 
-pub fn pmm_alloc_page(flags: usize) -> *mut vm_page_t {
+pub fn pmm_alloc_page(flags: u32) -> *mut vm_page_t {
     BOOT_CONTEXT.pmm_node().alloc_page(flags)
 }
 
-pub fn pmm_alloc_pages(count: usize, alloc_flags: usize,
+pub fn pmm_alloc_pages(count: usize, alloc_flags: u32,
                        list: &mut List<vm_page_t>)
     -> Result<(), ErrNO> {
     BOOT_CONTEXT.pmm_node().alloc_pages(count, alloc_flags, list)
@@ -469,7 +483,7 @@ pub fn pmm_add_arena(info: ArenaInfo) -> Result<(), ErrNO> {
     pmm_node.add_arena(info)
 }
 
-pub fn pmm_alloc_contiguous(count: usize, alloc_flags: usize,
+pub fn pmm_alloc_contiguous(count: usize, alloc_flags: u32,
                             alignment_log2: usize, _pa: &mut paddr_t,
                             list: &mut List<vm_page_t>)
     -> Result<(), ErrNO> {

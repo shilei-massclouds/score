@@ -127,7 +127,7 @@ impl VmAspace {
         /* InitializeAslr(); */
     }
 
-    fn get_root_vmar(&mut self) -> &mut VmAddressRegion {
+    pub fn root_vmar(&mut self) -> &mut VmAddressRegion {
         if let Some(vmar) = &mut self.root_vmar {
             return vmar;
         }
@@ -293,7 +293,7 @@ fn vm_init_preheap_vmars() {
     let aspace_list = ASPACE_LIST.lock();
     println!("vm_init_preheap_vmars");
     let kernel_aspace = aspace_list.head();
-    let root_vmar = unsafe { (*kernel_aspace).get_root_vmar() };
+    let root_vmar = unsafe { (*kernel_aspace).root_vmar() };
 
     root_vmar.insert_child(kernel_physmap_vmar);
 
