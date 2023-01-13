@@ -205,3 +205,14 @@ fn mask_bits(data: usize, idx: usize, bitoff: usize, bitmax: usize, is_set: bool
         mask & data
   }
 }
+
+#[macro_export]
+macro_rules! BIT_MASK {
+    ($bits: expr) => {
+        if $bits >= usize::BITS as usize {
+            usize::MAX
+        } else {
+            (1 << $bits) - 1
+        }
+    }
+}

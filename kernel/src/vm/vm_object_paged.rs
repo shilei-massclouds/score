@@ -9,8 +9,12 @@
 use alloc::string::String;
 
 use crate::ZX_ASSERT;
+use crate::defines::PAGE_SIZE;
 use crate::errors::ErrNO;
-use crate::pmm::PMM_ALLOC_FLAG_CAN_WAIT;
+use crate::klib::list::List;
+use crate::page::vm_page_t;
+use crate::pmm::{PMM_ALLOC_FLAG_CAN_WAIT, pmm_alloc_pages};
+use crate::vm::vm_cow_pages::{VmCowPages, CanOverwriteContent};
 
 pub struct VmObject {
     name: String,
@@ -85,6 +89,37 @@ impl VmObjectPaged {
             options |= Self::K_CAN_BLOCK_ON_PAGE_REQUESTS;
         }
 
+        /* make sure size is page aligned */
+        let size = ROUNDUP_PAGE_SIZE!(size);
+
+        let cow_pages =
+            VmCowPages::create(VmCowPages::K_NONE, pmm_alloc_flags, size)?;
+
+        /* If this VMO will always be pinned, allocate and pin the pages
+         * in the VmCowPages prior to creating the VmObjectPaged.
+         * This ensures the VmObjectPaged destructor can assume
+         * that the pages are committed and pinned. */
+        if Self::check_bits(options, Self::K_ALWAYS_PINNED) {
+            let mut prealloc_pages = List::<vm_page_t>::new();
+            prealloc_pages.init();
+            pmm_alloc_pages(size / PAGE_SIZE,
+                            pmm_alloc_flags,
+                            &mut prealloc_pages)?;
+
+            /* Add all the preallocated pages to the object, this takes
+             * ownership of all pages regardless of the outcome.
+             * This is a new VMO, but this call could fail due to OOM. */
+            cow_pages.add_new_pages(0, &mut prealloc_pages,
+                                    CanOverwriteContent::Zero,
+                                    true, false)?;
+
+            /* With all the pages in place, pin them. */
+            cow_pages.pin_range(0, size)?;
+
+            todo!("K_ALWAYS_PINNED!");
+        }
+
+        todo!("create_common!");
         Err(ErrNO::InvalidArgs)
     }
 

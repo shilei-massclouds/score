@@ -112,9 +112,6 @@ pub extern "C" fn setup_vm() {
                 return null_mut();
             }
             let base = &mut _swapper_tables[used] as *mut PageTable;
-            stdout.puts("In alloc[");
-            stdout.put_u64(base as u64);
-            stdout.puts("]In alloc!\n");
             used += 1;
             return base;
         }
@@ -297,6 +294,10 @@ pub unsafe fn arch_zero_page(va: vaddr_t) {
         in(reg) va,
         in(reg) (va + PAGE_SIZE),
     );
+}
+
+pub fn zero_page(va: vaddr_t) {
+    unsafe { arch_zero_page(va); }
 }
 
 pub fn protect_pages(vaddr: vaddr_t, size: usize, prot: prot_t)
