@@ -6,6 +6,8 @@
  * at https://opensource.org/licenses/MIT
  */
 
+use core::ptr::null_mut;
+
 use crate::types::vaddr_t;
 use crate::{ZX_ASSERT, vm_page_state};
 use crate::arch::mmu::zero_page;
@@ -13,6 +15,7 @@ use crate::defines::{PAGE_SIZE, paddr_to_physmap};
 use crate::errors::ErrNO;
 use crate::klib::list::List;
 use crate::page::{vm_page_t, vm_page_object};
+use super::page_source::PageSource;
 use super::vm_page_list::{VmPageList, VmPageOrMarker};
 
 type VmCowPagesPtr = *mut VmCowPages;
@@ -37,6 +40,7 @@ pub struct VmCowPages {
     options: u32,
     pmm_alloc_flags: u32,
     page_list: VmPageList,
+    page_source: *mut PageSource,
 }
 
 impl VmCowPages {
@@ -68,6 +72,7 @@ impl VmCowPages {
             options,
             pmm_alloc_flags,
             page_list: VmPageList::new(),
+            page_source: null_mut(),
         }
     }
 
@@ -121,6 +126,20 @@ impl VmCowPages {
         }
     }
 
+    fn is_user_pager_backed(&self) -> bool {
+        if self.page_source.is_null() {
+            return false;
+        }
+        todo!("self.page_source.properties().is_user_pager");
+    }
+
+    fn is_source_preserving_page_content(&self) -> bool {
+        if self.page_source.is_null() {
+            return false;
+        }
+        todo!("is_source_preserving_page_content");
+    }
+
     fn add_new_page(&self, offset: usize, page: *mut vm_page_t,
                     overwrite: &CanOverwriteContent,
                     released_page: Option<&mut VmPageOrMarker>,
@@ -138,20 +157,18 @@ impl VmCowPages {
          * a valid dirty_state before being added to the page list,
          * so that they can be inserted in the correct page queue.
          * New pages start off clean. */
-        /*
-        if is_source_preserving_page_content() {
+        if self.is_source_preserving_page_content() {
+            todo!("is_source_preserving_page_content");
             /* Only zero pages can be added as new pages to
              * pager backed VMOs. */
+            /*
             ZX_ASSERT!(zero || IsZeroPage(page));
             UpdateDirtyStateLocked(page, offset, DirtyState::Clean, /*is_pending_add=*/true);
+            */
         }
-        */
 
         let mut p = VmPageOrMarker::Page(page);
-        Self::add_page(&mut p, offset, overwrite, released_page, do_range_update)?;
-
-        todo!("add_new_page!");
-        Ok(())
+        Self::add_page(&mut p, offset, overwrite, released_page, do_range_update)
     }
 
     fn add_page(p: &mut VmPageOrMarker, offset: usize,
