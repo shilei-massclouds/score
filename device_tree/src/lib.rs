@@ -49,7 +49,6 @@ const OF_DT_BEGIN_NODE : u32 = 0x00000001;
 const OF_DT_END_NODE   : u32 = 0x00000002;
 const OF_DT_PROP       : u32 = 0x00000003;
 
-
 /// An error describe parsing problems when creating device trees.
 #[derive(Debug)]
 pub enum DeviceTreeError {

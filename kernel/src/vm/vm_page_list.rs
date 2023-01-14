@@ -11,6 +11,9 @@ use crate::page::vm_page_t;
 use crate::ZX_ASSERT;
 use crate::types::*;
 use crate::BIT_MASK;
+use crate::debug::*;
+use crate::defines::{PAGE_SIZE, PAGE_SHIFT};
+use rbtree::RBTree;
 
 // RAII helper for representing content in a page list node. This supports being in one of three
 // states
@@ -22,6 +25,7 @@ use crate::BIT_MASK;
 //  * Marker      - Indicates that whilst not a page, it is also not empty. Markers can be used to
 //                  separate the distinction between "there's no page because we've deduped to the
 //                  zero page" and "there's no page because our parent contains the content".
+#[derive(Clone, Copy)]
 pub struct VmPageOrMarker {
     raw: usize,
 }
@@ -72,11 +76,11 @@ impl VmPageOrMarker {
     }
 
     #[allow(dead_code)]
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self::new(Self::K_PAGE_TYPE)
     }
     #[allow(dead_code)]
-    pub fn marker() -> Self {
+    pub const fn marker() -> Self {
         Self::new(Self::K_ZERO_MARKER_TYPE)
     }
 
@@ -107,18 +111,90 @@ impl VmPageOrMarker {
 
 }
 
-pub struct VmPageList {
+pub struct VmPageListNode {
+    obj_offset: usize,
+    pages: [VmPageOrMarker; Self::K_PAGE_FAN_OUT],
 }
 
-impl VmPageList {
-    pub const fn new() -> Self {
+impl VmPageListNode {
+    const K_PAGE_FAN_OUT: usize = 16;
+
+    pub const fn new(obj_offset: usize) -> Self {
         Self {
+            obj_offset,
+            pages: [VmPageOrMarker::empty(); Self::K_PAGE_FAN_OUT],
         }
     }
 
-    pub fn lookup_or_allocate(&mut self, _offset: usize)
-        -> Result<VmPageOrMarker, ErrNO>
+    pub fn lookup(&self, index: usize) -> &VmPageOrMarker {
+        ZX_ASSERT!(index < Self::K_PAGE_FAN_OUT);
+        &self.pages[index]
+    }
+
+    pub fn lookup_mut(&mut self, index: usize) -> &mut VmPageOrMarker {
+        ZX_ASSERT!(index < Self::K_PAGE_FAN_OUT);
+        &mut self.pages[index]
+    }
+}
+
+pub struct VmPageList {
+    list: RBTree<usize, VmPageListNode>,
+
+    /* A skew added to offsets provided as arguments to VmPageList functions
+     * before interfacing with list_. This allows all VmPageLists within
+     * a clone tree to place individual vm_page_t entries at the same offsets
+     * within their nodes, so that the nodes can be moved between
+     * different lists without having to worry about needing to
+     * split up a node. */
+    list_skew: usize,
+}
+
+impl VmPageList {
+    /* Allow the implementation to use a one-past-the-end for
+     * VmPageListNode offsets, plus to account for skew_. */
+    const MAX_SIZE: usize =
+        ROUNDDOWN!(usize::MAX, 2 * VmPageListNode::K_PAGE_FAN_OUT * PAGE_SIZE);
+
+    pub const fn new() -> Self {
+        Self {
+            list: RBTree::new(),
+            list_skew: 0,
+        }
+    }
+
+    #[inline]
+    fn offset_to_node_offset(offset: usize, skew: usize) -> usize {
+        ROUNDDOWN!(offset + skew, PAGE_SIZE * VmPageListNode::K_PAGE_FAN_OUT)
+    }
+
+    #[inline]
+    fn offset_to_node_index(offset: usize, skew: usize) -> usize {
+        ((offset + skew) >> PAGE_SHIFT) % VmPageListNode::K_PAGE_FAN_OUT
+    }
+
+    pub fn lookup_or_allocate(&mut self, offset: usize)
+        -> Result<&mut VmPageOrMarker, ErrNO>
     {
-        todo!("lookup_or_allocate");
+        let node_offset = Self::offset_to_node_offset(offset, self.list_skew);
+        let index = Self::offset_to_node_index(offset, self.list_skew);
+
+        if node_offset >= VmPageList::MAX_SIZE {
+            return Err(ErrNO::OutOfRange);
+        }
+
+        dprintf!(INFO, "offset {} node_offset {} index {}\n",
+                 offset, node_offset, index);
+
+        if !self.list.contains_key(&node_offset) {
+            let pl = VmPageListNode::new(node_offset);
+            self.list.insert(node_offset, pl);
+        }
+
+        /* lookup the tree node that holds this page */
+        if let Some(pln) = self.list.get_mut(&node_offset) {
+            return Ok(pln.lookup_mut(index));
+        }
+
+        panic!("Bad VmPageListNode!");
     }
 }
