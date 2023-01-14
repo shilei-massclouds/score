@@ -18,6 +18,7 @@ use crate::page::{vm_page_t, vm_page_object};
 use super::page_source::PageSource;
 use super::vm_page_list::{VmPageList, VmPageOrMarker};
 
+#[allow(dead_code)]
 type VmCowPagesPtr = *mut VmCowPages;
 
 /* Controls the type of content that can be overwritten by
@@ -25,19 +26,24 @@ type VmCowPagesPtr = *mut VmCowPages;
 pub enum CanOverwriteContent {
     // Do not overwrite any kind of content, i.e. only add a page at the slot if there is true
     // absence of content.
+    #[allow(dead_code)]
     None,
     // Only overwrite slots that represent zeros. In the case of anonymous VMOs, both gaps and zero
     // page markers represent zeros, as the entire VMO is implicitly zero on creation. For pager
     // backed VMOs, zero page markers and gaps after supply_zero_offset_ represent zeros.
     Zero,
     // Overwrite any slots, regardless of the type of content.
+    #[allow(dead_code)]
     NonZero,
 }
 
 pub struct VmCowPages {
+    #[allow(dead_code)]
     base: vaddr_t,
     size: usize,
+    #[allow(dead_code)]
     options: u32,
+    #[allow(dead_code)]
     pmm_alloc_flags: u32,
     page_list: VmPageList,
     page_source: *mut PageSource,
@@ -56,11 +62,13 @@ impl VmCowPages {
     // pages aren't pinned, but that mitigation should be sufficient (even assuming such a client) to
     // allow implicit decommit when zeroing or when zero scanning, as long as no clients are doing DMA
     // to/from contiguous while not pinned.
+    #[allow(dead_code)]
     pub const K_CANNOT_DECOMMIT_ZERO_PAGES: u32 = 1 << 0;
 
     // Internal-only flags:
     pub const K_HIDDEN:         u32 = 1 << 1;
     pub const K_SLICE:          u32 = 1 << 2;
+    #[allow(dead_code)]
     pub const K_UNPIN_ON_DELETE:u32 = 1 << 3;
 
     pub const K_INTERNAL_ONLY_MASK: u32 = Self::K_HIDDEN | Self::K_SLICE;
@@ -84,10 +92,10 @@ impl VmCowPages {
         Ok(cow)
     }
 
-    pub fn add_new_pages(&self, start_offset: usize,
+    pub fn add_new_pages(&mut self, start_offset: usize,
                          pages: &mut List<vm_page_t>,
                          overwrite: CanOverwriteContent, zero: bool,
-                         do_range_update: bool)
+                         _do_range_update: bool)
         -> Result<(), ErrNO>
     {
         ZX_ASSERT!(!matches!(overwrite, CanOverwriteContent::NonZero));
@@ -96,6 +104,9 @@ impl VmCowPages {
         let mut offset = start_offset;
         loop {
             let p = pages.pop_head();
+            if p == null_mut() {
+                break;
+            }
             /* Defer the range change update by passing false
              * as we will do it in bulk at the end if needed. */
             self.add_new_page(offset, p, &overwrite, None, zero, false)?;
@@ -104,7 +115,6 @@ impl VmCowPages {
         }
 
         todo!("add_new_pages!");
-        Ok(())
     }
 
     fn zero_page(page_ptr: *mut vm_page_t) {
@@ -126,6 +136,7 @@ impl VmCowPages {
         }
     }
 
+    #[allow(dead_code)]
     fn is_user_pager_backed(&self) -> bool {
         if self.page_source.is_null() {
             return false;
@@ -140,7 +151,7 @@ impl VmCowPages {
         todo!("is_source_preserving_page_content");
     }
 
-    fn add_new_page(&self, offset: usize, page: *mut vm_page_t,
+    fn add_new_page(&mut self, offset: usize, page: *mut vm_page_t,
                     overwrite: &CanOverwriteContent,
                     released_page: Option<&mut VmPageOrMarker>,
                     zero: bool, do_range_update: bool)
@@ -167,23 +178,40 @@ impl VmCowPages {
             */
         }
 
-        let mut p = VmPageOrMarker::Page(page);
-        Self::add_page(&mut p, offset, overwrite, released_page, do_range_update)
+        let mut p = VmPageOrMarker::as_page(page);
+        self.add_page(&mut p, offset, overwrite, released_page, do_range_update)
     }
 
-    fn add_page(p: &mut VmPageOrMarker, offset: usize,
-                overwrite: &CanOverwriteContent,
+    fn add_page(&mut self, p: &mut VmPageOrMarker, offset: usize,
+                _overwrite: &CanOverwriteContent,
                 released_page: Option<&mut VmPageOrMarker>,
-                do_range_update: bool)
+                _do_range_update: bool)
         -> Result<(), ErrNO>
     {
+        if p.is_page() {
+            println!("vmo offset {}, page (0x{:x}))\n",
+                     offset, unsafe { (*p.page()).paddr() });
+        } else if p.is_reference() {
+            todo!("is_reference");
+        } else {
+            ZX_ASSERT!(p.is_marker());
+        }
+
+        if let Some(r) = released_page {
+            r.set_empty();
+        }
+
+        if offset >= self.size {
+            return Err(ErrNO::OutOfRange);
+        }
+
+        let _page = self.page_list.lookup_or_allocate(offset)?;
+
         todo!("add_page!");
-        Ok(())
     }
 
-    pub fn pin_range(&self, offset: usize, len: usize) -> Result<(), ErrNO> {
+    pub fn pin_range(&self, _offset: usize, _len: usize) -> Result<(), ErrNO> {
         todo!("add_new_pages!");
-        Ok(())
     }
 
 }

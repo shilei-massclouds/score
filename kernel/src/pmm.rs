@@ -31,6 +31,7 @@ use crate::platform::boot_reserve::{
 /* no restrictions on which arena to allocate from */
 pub const PMM_ALLOC_FLAG_ANY: u32 = 0 << 0;
 /* allocate only from arenas marked LO_MEM */
+#[allow(dead_code)]
 pub const PMM_ALLOC_FLAG_LO_MEM: u32 = 1 << 0;
 // The caller is able to wait and retry this allocation and so pmm allocation functions are allowed
 // to return ZX_ERR_SHOULD_WAIT, as opposed to ZX_ERR_NO_MEMORY, to indicate that the caller should
@@ -40,8 +41,10 @@ pub const PMM_ALLOC_FLAG_LO_MEM: u32 = 1 << 0;
 pub const PMM_ALLOC_FLAG_CAN_WAIT: u32 = 1 << 1;
 // The default (flag not set) is to not allocate a loaned page, so that we don't end up with loaned
 // pages allocated for arbitrary purposes that prevent us from getting the loaned page back quickly.
+#[allow(dead_code)]
 pub const PMM_ALLOC_FLAG_CAN_BORROW: u32 = 1 << 2;
 // Require a loaned page, and fail to allocate if a loaned page isn't available.
+#[allow(dead_code)]
 pub const PMM_ALLOC_FLAG_MUST_BORROW: u32 = 1 << 3;
 
 /* all of the configured memory arenas */

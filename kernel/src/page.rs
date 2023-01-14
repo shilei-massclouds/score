@@ -62,11 +62,15 @@ impl vm_page_object {
     // 5. A write that comes in while the writeback is in progress (i.e. the page is AwaitingClean)
     // moves the AwaitingClean page back to Dirty.
     pub const DIRTY_STATE_UNTRACKED:    u8 = 0;
+    #[allow(dead_code)]
     pub const DIRTY_STATE_CLEAN:        u8 = 1;
+    #[allow(dead_code)]
     pub const DIRTY_STATE_DIRTY:        u8 = 2;
+    #[allow(dead_code)]
     pub const DIRTY_STATE_AWAITINGCLEAN:u8 = 3;
     pub const DIRTY_STATE_NUM_STATES:   u8 = 4;
 
+    #[allow(dead_code)]
     const fn new() -> Self {
         Self {
             pin_count: 0,
@@ -74,6 +78,7 @@ impl vm_page_object {
         }
     }
 
+    #[allow(dead_code)]
     pub fn pin_count(&self) -> u8 {
         self.pin_count
     }
@@ -85,6 +90,7 @@ impl vm_page_object {
         self.pin_count = pin_count;
     }
 
+    #[allow(dead_code)]
     pub fn cow_left_split(&self) -> bool {
         (self.pin_count & Self::VM_PAGE_OBJECT_COW_LEFT_SPLIT) != 0
     }
@@ -97,6 +103,7 @@ impl vm_page_object {
         }
     }
 
+    #[allow(dead_code)]
     pub fn cow_right_split(&self) -> bool {
         (self.pin_count & Self::VM_PAGE_OBJECT_COW_RIGHT_SPLIT) != 0
     }
@@ -112,6 +119,7 @@ impl vm_page_object {
     /* Hint for whether the page is always needed and should not be considered
      * for reclamation under memory pressure (unless the kernel decides to
      * override hints for some reason). */
+    #[allow(dead_code)]
     pub fn always_need(&self) -> bool {
         (self.pin_count & Self::VM_PAGE_OBJECT_ALWAYS_NEED) != 0
     }
@@ -124,6 +132,7 @@ impl vm_page_object {
         }
     }
 
+    #[allow(dead_code)]
     pub fn dirty_state(&self) -> u8 {
         self.dirty_state
     }

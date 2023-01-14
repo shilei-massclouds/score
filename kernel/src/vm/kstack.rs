@@ -33,6 +33,7 @@ const K_SAFE: StackType = StackType {
 struct KernelStackMapping {
     base: vaddr_t,
     size: usize,
+    #[allow(dead_code)]
     vmar: VmAddressRegion,
 }
 
@@ -45,6 +46,7 @@ impl KernelStackMapping {
         }
     }
 
+    #[allow(dead_code)]
     fn top(&self) -> vaddr_t {
         self.base + self.size
     }
@@ -79,7 +81,7 @@ fn allocate_map(stype: StackType, map: &KernelStackMapping)
     let aspace_list = ASPACE_LIST.lock();
     let kernel_aspace = aspace_list.head();
     unsafe {
-        let vmar = (*kernel_aspace).root_vmar();
+        let _vmar = (*kernel_aspace).root_vmar();
         /* Create a VMO for our stack */
         let stack_vmo = VmObjectPaged::create(PMM_ALLOC_FLAG_ANY,
                                               VmObjectPaged::K_ALWAYS_PINNED,

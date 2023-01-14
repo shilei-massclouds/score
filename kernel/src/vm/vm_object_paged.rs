@@ -21,6 +21,7 @@ pub struct VmObject {
 }
 
 impl VmObject {
+    #[allow(dead_code)]
     const fn new() -> Self {
         Self {
             name: String::new(),
@@ -42,11 +43,14 @@ impl VmObjectPaged {
     /* |options_| is a bitmask of: */
     pub const K_RESIZABLE:      u32 = 1 << 0;
     pub const K_CONTIGUOUS:     u32 = 1 << 1;
+    #[allow(dead_code)]
     pub const K_SLICE:          u32 = 1 << 3;
+    #[allow(dead_code)]
     pub const K_DISCARDABLE:    u32 = 1 << 4;
     pub const K_ALWAYS_PINNED:  u32 = 1 << 5;
     pub const K_CAN_BLOCK_ON_PAGE_REQUESTS: u32 = 1 << 31;
 
+    #[allow(dead_code)]
     pub const fn new() -> Self {
         Self {
             vmo: VmObject::new(),
@@ -92,7 +96,7 @@ impl VmObjectPaged {
         /* make sure size is page aligned */
         let size = ROUNDUP_PAGE_SIZE!(size);
 
-        let cow_pages =
+        let mut cow_pages =
             VmCowPages::create(VmCowPages::K_NONE, pmm_alloc_flags, size)?;
 
         /* If this VMO will always be pinned, allocate and pin the pages
@@ -120,7 +124,6 @@ impl VmObjectPaged {
         }
 
         todo!("create_common!");
-        Err(ErrNO::InvalidArgs)
     }
 
 }

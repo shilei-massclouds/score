@@ -6,6 +6,7 @@
  * at https://opensource.org/licenses/MIT
  */
 
+use crate::errors::ErrNO;
 use crate::page::vm_page_t;
 use crate::ZX_ASSERT;
 use crate::types::*;
@@ -40,7 +41,22 @@ impl VmPageOrMarker {
         }
     }
 
-    pub fn Page(p: *mut vm_page_t) -> VmPageOrMarker {
+    /* reference to the underlying vm_page*.
+     * Is only valid to call if `IsPage` is true. */
+    pub fn page(&self) -> *mut vm_page_t {
+        ZX_ASSERT!(self.is_page());
+        /* Do not need to mask any bits out of raw_,
+         * since Page has 0's for the type anyway. */
+        self.raw as *mut vm_page_t
+    }
+    /*
+    ReferenceValue Reference() const {
+        DEBUG_ASSERT(IsReference());
+        return ReferenceValue(raw_ & ~BIT_MASK(kReferenceBits));
+    }
+    */
+
+    pub fn as_page(p: *mut vm_page_t) -> Self {
         /* A null page is incorrect for two reasons
          * 1. It's a violation of the API of this method
          * 2. A null page cannot be represented internally
@@ -54,6 +70,41 @@ impl VmPageOrMarker {
         ZX_ASSERT!((raw & BIT_MASK!(Self::K_TYPE_BITS)) == 0);
         Self::new(raw | Self::K_PAGE_TYPE)
     }
+
+    #[allow(dead_code)]
+    pub fn empty() -> Self {
+        Self::new(Self::K_PAGE_TYPE)
+    }
+    #[allow(dead_code)]
+    pub fn marker() -> Self {
+        Self::new(Self::K_ZERO_MARKER_TYPE)
+    }
+
+    pub fn set_empty(&mut self) {
+        self.raw = Self::K_PAGE_TYPE;
+    }
+
+    fn get_type(&self) -> usize {
+        self.raw & BIT_MASK!(Self::K_TYPE_BITS)
+    }
+
+    pub fn is_page(&self) -> bool {
+        !self.is_empty() && (self.get_type() == Self::K_PAGE_TYPE)
+    }
+    pub fn is_marker(&self) -> bool {
+        self.get_type() == Self::K_ZERO_MARKER_TYPE
+    }
+    pub fn is_empty(&self) -> bool {
+        self.raw == Self::K_PAGE_TYPE
+    }
+    pub fn is_reference(&self) -> bool {
+        self.get_type() == Self::K_REFERENCE_TYPE
+    }
+    #[allow(dead_code)]
+    pub fn is_page_or_ref(&self) -> bool {
+        self.is_page() || self.is_reference()
+    }
+
 }
 
 pub struct VmPageList {
@@ -63,5 +114,11 @@ impl VmPageList {
     pub const fn new() -> Self {
         Self {
         }
+    }
+
+    pub fn lookup_or_allocate(&mut self, _offset: usize)
+        -> Result<VmPageOrMarker, ErrNO>
+    {
+        todo!("lookup_or_allocate");
     }
 }
