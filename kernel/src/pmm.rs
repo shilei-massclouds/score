@@ -13,6 +13,7 @@ use crate::BOOT_CONTEXT;
 use crate::debug::*;
 use crate::ErrNO;
 use crate::klib::list::Linked;
+use crate::vm::page_queues::PageQueues;
 use crate::{print, dprintf, ZX_ASSERT};
 use crate::{PAGE_SIZE, PAGE_SHIFT, paddr_to_physmap};
 use alloc::vec::Vec;
@@ -239,6 +240,7 @@ pub struct PmmNode {
     /* Free pages where !loaned. */
     free_count  : AtomicU64,
     free_list   : List<vm_page_t>,
+    page_queues : PageQueues,
 }
 
 impl PmmNode {
@@ -250,11 +252,16 @@ impl PmmNode {
 
             free_count  : AtomicU64::new(0),
             free_list   : List::<vm_page_t>::new(),
+            page_queues : PageQueues::new(),
         }
     }
 
     pub fn init(&mut self) {
         self.free_list.init();
+    }
+
+    pub fn page_queues(&self) -> &PageQueues {
+        &self.page_queues
     }
 
     /* during early boot before threading exists. */
@@ -514,4 +521,9 @@ pub fn paddr_to_vm_page(pa: paddr_t) -> *mut vm_page_t {
 pub fn pmm_free(_list: &List::<vm_page_t>) {
     todo!("pmm_free!");
     //pmm_node.FreeList(list)
+}
+
+pub fn pmm_page_queues() -> &'static PageQueues {
+    let pmm_node = BOOT_CONTEXT.pmm_node();
+    pmm_node.page_queues()
 }

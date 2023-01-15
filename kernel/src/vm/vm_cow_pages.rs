@@ -17,6 +17,7 @@ use crate::klib::list::List;
 use crate::page::{vm_page_t, vm_page_object};
 use super::page_source::PageSource;
 use super::vm_page_list::{VmPageList, VmPageOrMarker};
+use crate::pmm::pmm_page_queues;
 
 #[allow(dead_code)]
 type VmCowPagesPtr = *mut VmCowPages;
@@ -183,7 +184,7 @@ impl VmCowPages {
     }
 
     fn add_page(&mut self, p: &mut VmPageOrMarker, offset: usize,
-                _overwrite: &CanOverwriteContent,
+                overwrite: &CanOverwriteContent,
                 released_page: Option<&mut VmPageOrMarker>,
                 _do_range_update: bool)
         -> Result<(), ErrNO>
@@ -205,9 +206,72 @@ impl VmCowPages {
             return Err(ErrNO::OutOfRange);
         }
 
-        let _page = self.page_list.lookup_or_allocate(offset)?;
+        let page = self.page_list.lookup_or_allocate(offset)?;
+
+        /* We cannot overwrite any kind of content. */
+        if matches!(overwrite, CanOverwriteContent::None) {
+            todo!("CanOverwriteContent::None!");
+        }
+
+        // We're only permitted to overwrite zero content. This has different meanings based on the
+        // whether the VMO is anonymous or is backed by a pager.
+        //
+        //  * For anonymous VMOs, the initial content for the entire VMO is implicitly all zeroes at the
+        //  time of creation. So both zero page markers and empty slots represent zero content. Therefore
+        //  the only content type that cannot be overwritten in this case is an actual page.
+        //
+        //  * For pager backed VMOs, content is either explicitly supplied by the user pager before
+        //  supply_zero_offset_, or implicitly supplied as zeros beyond supply_zero_offset_. So zero
+        //  content is represented by either zero page markers before supply_zero_offset_ (supplied by the
+        //  user pager), or by gaps after supply_zero_offset_ (supplied by the kernel). Therefore the only
+        //  content type that cannot be overwritten in this case as well is an actual page.
+        if matches!(overwrite, CanOverwriteContent::Zero) && page.is_page_or_ref() {
+            todo!("CanOverwriteContent::Zero! and page or ref!");
+        }
+
+        /* If the old entry is actual content, release it. */
+        if page.is_page_or_ref() {
+            todo!("is page or ref!");
+        }
+
+        // If the new page is an actual page and we have a page source,
+        // the page source should be able to validate the page.
+        // Note that having a page source implies that any content must be an actual page and so
+        // although we return an error for any kind of content, the debug check only gets run for page
+        // sources where it will be a real page.
+        ZX_ASSERT!(!p.is_page_or_ref() || self.page_source.is_null());
+
+        // If this is actually a real page, we need to place it into the appropriate queue.
+        if p.is_page() {
+            let low_level_page = p.page();
+            unsafe {
+                ZX_ASSERT!((*low_level_page).state() == vm_page_state::OBJECT);
+                ZX_ASSERT!((*low_level_page).object.pin_count() == 0);
+                self.set_not_wired_locked(low_level_page, offset);
+            }
+        }
 
         todo!("add_page!");
+    }
+
+    fn set_not_wired_locked(&self, page: *mut vm_page_t, offset: usize) {
+        if self.is_source_preserving_page_content() {
+            todo!("is_source_preserving_page_content!");
+            /*
+            DEBUG_ASSERT(is_page_dirty_tracked(page));
+            // We can only move Clean pages to the pager backed queues as they track age information for
+            // eviction; only Clean pages can be evicted. Pages in AwaitingClean and Dirty are protected
+            // from eviction in the Dirty queue.
+            if (is_page_clean(page)) {
+                pmm_page_queues()->SetPagerBacked(page, this, offset);
+            } else {
+                DEBUG_ASSERT(!page->is_loaned());
+                pmm_page_queues()->SetPagerBackedDirty(page, this, offset);
+            }
+            */
+        } else {
+            pmm_page_queues().set_anonymous(page, self, offset);
+        }
     }
 
     pub fn pin_range(&self, _offset: usize, _len: usize) -> Result<(), ErrNO> {
