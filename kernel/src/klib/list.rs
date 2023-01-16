@@ -37,6 +37,12 @@ pub trait Linked<T> {
 
     fn into_node(&mut self) -> *mut ListNode;
 
+    fn is_in_list(&mut self) -> bool {
+        unsafe {
+            (*self.into_node()).is_in_list()
+        }
+    }
+
     fn delete_from_list(&mut self) {
         unsafe {
             (*self.into_node()).delete_from_list();
@@ -64,6 +70,10 @@ impl ListNode {
     pub fn init(&mut self) {
         self.next = null_mut();
         self.prev = null_mut();
+    }
+
+    pub fn is_in_list(&self) -> bool {
+        !self.next.is_null()
     }
 
     pub fn delete_from_list(&mut self) {

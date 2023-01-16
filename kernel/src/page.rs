@@ -6,11 +6,12 @@
  * at https://opensource.org/licenses/MIT
  */
 
-use core::sync::atomic::{AtomicU8, Ordering};
+use crate::ZX_ASSERT;
 use crate::types::*;
 use crate::klib::list::{Linked, ListNode};
 use crate::vm_page_state;
 use crate::vm_page_state::vm_page_state_t;
+use core::sync::atomic::{fence, AtomicU8, Ordering, AtomicUsize};
 
   // logically private, use loaned getters and setters below.
 #[allow(non_upper_case_globals)]
@@ -21,6 +22,19 @@ const _kLoanedStateIsLoanCancelled: u8 = 2;
 
 #[allow(non_camel_case_types)]
 pub struct vm_page_object {
+    object_or_stack_owner: AtomicUsize,
+
+    // When object_or_event_priv is pointing to a VmCowPages, this is the offset in the VmCowPages
+    // that contains this page.
+    //
+    // Else this field is 0.
+    //
+    // Field should be modified by the setters and getters to allow for future encoding changes.
+    page_offset_priv: usize,
+
+    // Identifies which queue this page is in.
+    pub page_queue: AtomicU8,
+
     pin_count: u8,
 
     /* Tracks state used to determine whether the page is dirty and
@@ -70,12 +84,90 @@ impl vm_page_object {
     pub const DIRTY_STATE_AWAITINGCLEAN:u8 = 3;
     pub const DIRTY_STATE_NUM_STATES:   u8 = 4;
 
+    const K_OBJECT_OR_STACK_OWNER_IS_STACK_OWNER_FLAG:  usize = 0x1;
+    const K_OBJECT_OR_STACK_OWNER_HAS_WAITER:           usize = 0x2;
+    const K_OBJECT_OR_STACK_OWNER_FLAGS:                usize = 0x3;
+
     #[allow(dead_code)]
     const fn new() -> Self {
         Self {
+            object_or_stack_owner: AtomicUsize::new(0),
+            page_offset_priv: 0,
+            page_queue: AtomicU8::new(0),
             pin_count: 0,
             dirty_state: Self::DIRTY_STATE_UNTRACKED,
         }
+    }
+
+    fn is_stack_owned(&self) -> bool {
+        /* This can return true for a page that was loaned fairly recently
+         * but is no longer loaned. */
+        let value = self.object_or_stack_owner.load(Ordering::Relaxed);
+        (value & Self::K_OBJECT_OR_STACK_OWNER_IS_STACK_OWNER_FLAG) != 0
+    }
+
+    pub fn get_object(&self) -> usize {
+        let value = self.object_or_stack_owner.load(Ordering::Relaxed);
+        if (value & Self::K_OBJECT_OR_STACK_OWNER_IS_STACK_OWNER_FLAG) != 0 {
+            return 0;
+        }
+        value
+    }
+
+    /* This also logically does clear_stack_owner() atomically. */
+    pub fn set_object(&mut self, obj: usize) {
+        /* If the caller wants to clear the object, use clear_object() instead. */
+        ZX_ASSERT!(obj != 0);
+        fence(Ordering::Release);
+        if self.is_stack_owned() {
+            self.clear_stack_owner_internal(obj);
+            return;
+        }
+        self.object_or_stack_owner.store(obj, Ordering::Relaxed);
+    }
+
+    fn clear_stack_owner(&self) {
+        self.clear_stack_owner_internal(0);
+    }
+
+    fn clear_stack_owner_internal(&self, obj: usize) {
+        // If this fires, it likely means there's an extra clear somewhere, possibly by the current
+        // thread, or possibly by a different thread.  This call could be the "extra" clear if the
+        // caller didn't check whether there's a stack owner before calling.
+        ZX_ASSERT!(self.is_stack_owned());
+        loop {
+            let old_value = self.object_or_stack_owner.load(Ordering::Relaxed);
+            // If this fires, it likely means that some other thread did a clear (so either this
+            // thread or the other thread shouldn't have cleared).  If this thread had already done a
+            // previous clear, the assert near the top would have fired instead.
+            ZX_ASSERT!((old_value & Self::K_OBJECT_OR_STACK_OWNER_IS_STACK_OWNER_FLAG) != 0);
+            // We don't want to be acquiring thread_lock here every time we free a loaned page, so we
+            // only acquire the thread_lock if the page's StackOwnedLoanedPagesInterval has a waiter,
+            // which is much more rare.  In that case we must acquire the thread_lock to avoid letting
+            // this thread continue and signal and delete the StackOwnedLoanedPagesInterval until
+            // after the waiter has finished blocking on the OwnedWaitQueue, so that the waiter can be
+            // woken and removed from the OwnedWaitQueue before the OwnedWaitQueue is deleted.
+            /*
+            ktl::optional<Guard<MonitoredSpinLock, IrqSave>> maybe_thread_lock_guard;
+            if (old_value & kObjectOrStackOwnerHasWaiter) {
+                // Acquire thread_lock.
+                maybe_thread_lock_guard.emplace(ThreadLock::Get(), SOURCE_TAG);
+            }
+            */
+            if self.object_or_stack_owner.compare_exchange_weak(old_value, obj,
+                Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+                break;
+            }
+            // ~maybe_thread_lock_guard will release thread_lock if it was acquired
+        }
+    }
+
+    pub fn get_page_offset(&self) -> usize {
+        self.page_offset_priv
+    }
+
+    pub fn set_page_offset(&mut self, page_offset: usize) {
+        self.page_offset_priv = page_offset;
     }
 
     #[allow(dead_code)]

@@ -270,7 +270,8 @@ impl VmCowPages {
             }
             */
         } else {
-            pmm_page_queues().set_anonymous(page, self, offset);
+            let object = &(*self) as *const VmCowPages as usize;
+            pmm_page_queues().set_anonymous(page, object, offset);
         }
     }
 

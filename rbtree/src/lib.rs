@@ -7,16 +7,13 @@
  */
 
 #![no_std]
+#![allow(dead_code)]
 
 use alloc::boxed::Box;
 use core::cmp::Ord;
-use core::fmt::{self, Debug};
+use core::fmt::Debug;
 use core::cmp::Ordering;
 use core::ptr;
-use core::iter::{IntoIterator, FromIterator};
-use core::marker;
-use core::mem;
-use core::ops::Index;
 
 extern crate alloc;
 

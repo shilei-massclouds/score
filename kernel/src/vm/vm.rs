@@ -8,7 +8,6 @@
 
 use alloc::vec::Vec;
 use spin::lazy::Lazy;
-use crate::BOOT_CONTEXT;
 use crate::ZX_ASSERT;
 use crate::arch::mmu::PAGE_READ;
 use crate::arch::mmu::PAGE_WRITE;

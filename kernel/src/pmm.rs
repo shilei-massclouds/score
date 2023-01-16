@@ -271,8 +271,8 @@ impl PmmNode {
     }
 
     pub fn init(&self) {
-        let mut free_list = self.free_list.lock();
-        free_list.init();
+        self.free_list.lock().init();
+        self.page_queues.init();
     }
 
     pub fn page_queues(&self) -> &PageQueues {

@@ -126,6 +126,7 @@ impl VmPageListNode {
         }
     }
 
+    #[allow(dead_code)]
     pub fn lookup(&self, index: usize) -> &VmPageOrMarker {
         ZX_ASSERT!(index < Self::K_PAGE_FAN_OUT);
         &self.pages[index]
