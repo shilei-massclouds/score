@@ -14,6 +14,7 @@ use crate::arch::mmu::PAGE_READ;
 use crate::arch::mmu::PAGE_WRITE;
 use crate::aspace::ASPACE_LIST;
 use crate::errors::ErrNO;
+use crate::pmm::PMM_NODE;
 use crate::pmm::PmmArena;
 use crate::types::*;
 use crate::defines::*;
@@ -157,7 +158,6 @@ fn physmap_protect_region(base: vaddr_t, size: usize, mmu_flags: usize) {
 
 fn physmap_protect_non_arena_regions() {
     // Create a buffer to hold the pmm_arena_info_t objects.
-    let pmm_node = BOOT_CONTEXT.pmm_node();
     let physmap_protect_gap = |base: vaddr_t, size: usize| {
         // Ideally, we'd drop the range completely, but early boot code currently relies
         // on peripherals being mapped in.
@@ -165,7 +165,11 @@ fn physmap_protect_non_arena_regions() {
         // TODO(fxbug.dev/47856): Remove these regions completely.
         physmap_protect_region(base, size, GAP_MMU_FLAGS);
     };
-    physmap_for_each_gap(&physmap_protect_gap, pmm_node.get_arenas());
+
+    {
+        let arenas = PMM_NODE.get_arenas();
+        physmap_for_each_gap(&physmap_protect_gap, &arenas);
+    }
 }
 
 fn physmap_for_each_gap<F>(func: &F, arenas: &Vec<PmmArena>)

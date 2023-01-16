@@ -41,7 +41,6 @@ impl<T> Mutex<T> {
         if !self.try_lock_fast() {
             todo!("__mutex_lock_slowpath(lock);");
         }
-        println!("lock!");
         MutexGuard::new(self)
     }
 
@@ -76,7 +75,6 @@ impl<'mutex, T: ?Sized> MutexGuard<'mutex, T> {
     }
 
     fn unlock(&self) {
-        println!("unlock!");
         if self.unlock_fast() {
             return;
         }

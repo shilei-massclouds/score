@@ -8,16 +8,17 @@
 
 use core::mem;
 use core::ptr::null_mut;
+use core::sync::atomic::AtomicUsize;
 use alloc::string::String;
-use crate::BOOT_CONTEXT;
 use crate::debug::*;
 use crate::ErrNO;
 use crate::klib::list::Linked;
+use crate::locking::mutex::Mutex;
+use crate::locking::mutex::MutexGuard;
 use crate::vm::page_queues::PageQueues;
 use crate::{print, dprintf, ZX_ASSERT};
 use crate::{PAGE_SIZE, PAGE_SHIFT, paddr_to_physmap};
 use alloc::vec::Vec;
-use core::sync::atomic::AtomicU64;
 use crate::types::*;
 use crate::klib::list::List;
 use crate::page::vm_page_t;
@@ -129,7 +130,7 @@ impl PmmArena {
         }
     }
 
-    pub fn init(&mut self, pmm_node: &mut PmmNode) -> Result<(), ErrNO> {
+    pub fn init(&mut self, pmm_node: &PmmNode) -> Result<(), ErrNO> {
         /* allocate an array of pages to back this one */
         let page_count = self.info.size / PAGE_SIZE;
         let vm_page_sz = mem::size_of::<vm_page_t>();
@@ -199,7 +200,7 @@ impl PmmArena {
             i += 1;
         }
 
-        pmm_node.add_free_pages(&mut list);
+        pmm_node.add_free_pages(&mut list, page_count);
         dprintf!(INFO, "init page_array ok!\n");
         Ok(())
     }
@@ -231,33 +232,47 @@ impl PmmArena {
     }
 }
 
+struct FreePageList {
+    count: usize,
+    list: List<vm_page_t>,
+}
+
+impl FreePageList {
+    pub const fn new() -> Self {
+        Self {
+            count: 0,
+            list : List::<vm_page_t>::new(),
+        }
+    }
+
+    fn init(&mut self) {
+        self.list.init();
+    }
+}
+
 /* per numa node collection of pmm arenas and worker threads */
 pub struct PmmNode {
-    arenas: Vec<PmmArena>,
+    arenas: Mutex<Vec<PmmArena>>,
+    arena_cumulative_size: AtomicUsize,
 
-    arena_cumulative_size: usize,
-
-    /* Free pages where !loaned. */
-    free_count  : AtomicU64,
-    free_list   : List<vm_page_t>,
-    page_queues : PageQueues,
+    free_list  : Mutex<FreePageList>,
+    page_queues: PageQueues,
 }
 
 impl PmmNode {
     pub const fn new() -> Self {
         Self {
-            arenas: Vec::<PmmArena>::new(),
+            arenas: Mutex::new(Vec::<PmmArena>::new()),
+            arena_cumulative_size: AtomicUsize::new(0),
 
-            arena_cumulative_size: 0,
-
-            free_count  : AtomicU64::new(0),
-            free_list   : List::<vm_page_t>::new(),
+            free_list   : Mutex::new(FreePageList::new()),
             page_queues : PageQueues::new(),
         }
     }
 
-    pub fn init(&mut self) {
-        self.free_list.init();
+    pub fn init(&self) {
+        let mut free_list = self.free_list.lock();
+        free_list.init();
     }
 
     pub fn page_queues(&self) -> &PageQueues {
@@ -265,7 +280,7 @@ impl PmmNode {
     }
 
     /* during early boot before threading exists. */
-    pub fn add_arena(&mut self, info: ArenaInfo) -> Result<(), ErrNO> {
+    pub fn add_arena(&self, info: ArenaInfo) -> Result<(), ErrNO> {
         dprintf!(INFO, "PMM: adding arena '{}' base {:x} size {:x}\n",
                  info.name, info.base, info.size);
 
@@ -284,30 +299,33 @@ impl PmmNode {
 
         dprintf!(INFO, "Adding arena '{}' ...\n", arena.name());
 
-        self.arena_cumulative_size += arena.size();
+        self.arena_cumulative_size.fetch_add(arena.size(), Ordering::Relaxed);
 
         /* insert arena in ascending order of its base address */
         let mut pos = 0;
-        for a in &(self.arenas) {
+        let mut arenas = self.arenas.lock();
+        for a in arenas.iter() {
             if arena.base() < a.base() {
-                return Ok(self.arenas.insert(pos, arena));
+                arenas.insert(pos, arena);
+                return Ok(())
             }
             pos += 1;
         }
 
-        Ok(self.arenas.push(arena))
+        arenas.push(arena);
+        Ok(())
     }
 
-    pub fn add_free_pages(&mut self, list: &mut List<vm_page_t>) {
-        self.free_count.fetch_add(list.len() as u64, Ordering::Relaxed);
-        self.free_list.splice(list);
+    pub fn add_free_pages(&self, list: &mut List<vm_page_t>, count: usize) {
+        let mut free_list = self.free_list.lock();
+        free_list.count += count;
+        free_list.list.splice(list);
         // free_pages_evt_.Signal();
 
-        dprintf!(INFO, "free count now {}\n",
-                 self.free_count.load(Ordering::Relaxed));
+        dprintf!(INFO, "free count now {}\n", free_list.count);
     }
 
-    fn alloc_range(&mut self, address: paddr_t, count: usize,
+    fn alloc_range(&self, address: paddr_t, count: usize,
                    list: &mut List<vm_page_t>) -> Result<(), ErrNO> {
         dprintf!(INFO, "address {:x}, count {:x}\n", address, count);
 
@@ -324,7 +342,9 @@ impl PmmNode {
         let mut allocated: usize = 0;
         /* walk through the arenas, looking to see
          * if the physical page belongs to it */
-        for area in &self.arenas {
+        let mut free_list = self.free_list.lock();
+        let arenas = self.arenas.lock();
+        for area in arenas.iter() {
             while allocated < count && area.address_in_arena(address) {
                 let page = area.find_specific(address);
 
@@ -356,7 +376,7 @@ impl PmmNode {
             }
         }
 
-        self.decrement_free_count_locked(allocated as u64);
+        free_list.count -= allocated;
 
         if allocated != count {
             /* we were not able to allocate the entire run, free these pages */
@@ -367,18 +387,19 @@ impl PmmNode {
         Ok(())
     }
 
-    fn alloc_page(&mut self, _flags: u32) -> *mut vm_page_t {
-        let page = self.free_list.pop_head();
+    fn alloc_page(&self, _flags: u32) -> *mut vm_page_t {
+        let mut free_list = self.free_list.lock();
+        let page = free_list.list.pop_head();
         unsafe {
             dprintf!(INFO, "alloc page: pa {:x}\n", (*page).paddr());
             ZX_ASSERT!(!(*page).is_loaned());
             self.alloc_page_helper_locked(page);
         }
-        self.decrement_free_count_locked(1);
+        free_list.count -= 1;
         page
     }
 
-    fn alloc_pages(&mut self, mut count: usize, alloc_flags: u32,
+    fn alloc_pages(&self, mut count: usize, alloc_flags: u32,
                    list: &mut List<vm_page_t>)
         -> Result<(), ErrNO> {
 
@@ -399,7 +420,8 @@ impl PmmNode {
         }
 
         while count > 0 {
-            let page = self.free_list.pop_head();
+            let mut free_list = self.free_list.lock();
+            let page = free_list.list.pop_head();
             if page == null_mut() {
                 return Err(ErrNO::NoMem);
             }
@@ -407,7 +429,7 @@ impl PmmNode {
                 self.alloc_page_helper_locked(page);
             }
             list.add_tail(page);
-            self.decrement_free_count_locked(1);
+            free_list.count -= 1;
             count -= 1;
         }
 
@@ -443,16 +465,12 @@ impl PmmNode {
         (*page).set_state(vm_page_state::ALLOC);
     }
 
-    fn decrement_free_count_locked(&mut self, amount: u64) {
-        ZX_ASSERT!(self.free_count.load(Ordering::Relaxed) >= amount);
-        self.free_count.fetch_sub(amount, Ordering::Relaxed);
-    }
-
     /* We don't need to hold the arena lock while executing this,
        since it is only accesses values that are set once
        during system initialization. */
     fn paddr_to_page(&self, pa: paddr_t) -> *mut vm_page_t {
-        for arena in &self.arenas {
+        let arenas = self.arenas.lock();
+        for arena in arenas.iter() {
             if !arena.address_in_arena(pa) {
                 continue;
             }
@@ -463,45 +481,43 @@ impl PmmNode {
     }
 
     pub fn _num_arenas(&self) -> usize {
-        self.arenas.len()
+        self.arenas.lock().len()
     }
 
-    pub fn get_arenas(&self) -> &Vec<PmmArena> {
-        &self.arenas
+    pub fn get_arenas(&self) -> MutexGuard<Vec<PmmArena>> {
+        self.arenas.lock()
     }
 }
 
 pub fn pmm_alloc_range(pa: paddr_t, count: usize, list: &mut List<vm_page_t>)
     -> Result<(), ErrNO>{
-    BOOT_CONTEXT.pmm_node().alloc_range(pa, count, list)
+    PMM_NODE.alloc_range(pa, count, list)
 }
 
 pub fn pmm_alloc_page(flags: u32) -> *mut vm_page_t {
-    BOOT_CONTEXT.pmm_node().alloc_page(flags)
+    PMM_NODE.alloc_page(flags)
 }
 
 pub fn pmm_alloc_pages(count: usize, alloc_flags: u32,
                        list: &mut List<vm_page_t>)
     -> Result<(), ErrNO> {
-    BOOT_CONTEXT.pmm_node().alloc_pages(count, alloc_flags, list)
+    PMM_NODE.alloc_pages(count, alloc_flags, list)
 }
 
 pub fn pmm_add_arena(info: ArenaInfo) -> Result<(), ErrNO> {
-    let pmm_node = BOOT_CONTEXT.pmm_node();
     dprintf!(INFO, "Arena.{}: flags[{:x}] {:x} {:x}\n",
              info.name, info.flags, info.base, info.size);
-    pmm_node.add_arena(info)
+    PMM_NODE.add_arena(info)
 }
 
 pub fn pmm_alloc_contiguous(count: usize, alloc_flags: u32,
                             alignment_log2: usize, _pa: &mut paddr_t,
                             list: &mut List<vm_page_t>)
     -> Result<(), ErrNO> {
-    let pmm_node = BOOT_CONTEXT.pmm_node();
     /* if we're called with a single page, just fall through to
      * the regular allocation routine */
     if count == 1 && alignment_log2 <= PAGE_SHIFT {
-        let page = pmm_node.alloc_page(alloc_flags);
+        let page = PMM_NODE.alloc_page(alloc_flags);
         if page == null_mut() {
             return Err(ErrNO::NoMem);
         }
@@ -514,8 +530,7 @@ pub fn pmm_alloc_contiguous(count: usize, alloc_flags: u32,
 }
 
 pub fn paddr_to_vm_page(pa: paddr_t) -> *mut vm_page_t {
-    let pmm_node = BOOT_CONTEXT.pmm_node();
-    pmm_node.paddr_to_page(pa)
+    PMM_NODE.paddr_to_page(pa)
 }
 
 pub fn pmm_free(_list: &List::<vm_page_t>) {
@@ -524,6 +539,7 @@ pub fn pmm_free(_list: &List::<vm_page_t>) {
 }
 
 pub fn pmm_page_queues() -> &'static PageQueues {
-    let pmm_node = BOOT_CONTEXT.pmm_node();
-    pmm_node.page_queues()
+    PMM_NODE.page_queues()
 }
+
+pub static PMM_NODE: PmmNode = PmmNode::new();

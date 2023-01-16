@@ -21,7 +21,7 @@ use klib::cmpctmalloc::Heap;
 use page::vm_page_t;
 use platform::boot_reserve::BootReserveRange;
 use platform::periphmap::PeriphRange;
-use pmm::PmmNode;
+use pmm::PMM_NODE;
 use stdio::StdOut;
 use thread::ThreadArg;
 
@@ -84,7 +84,6 @@ pub struct BootContext {
     reserve_ranges: Vec::<BootReserveRange>,
     periph_ranges: Vec::<PeriphRange>,
     reserved_page_list: List<vm_page_t>,
-    pmm_node: Option<PmmNode>,
     kernel_heap_base: usize,
     kernel_heap_size: usize,
     virtual_alloc: Option<VirtualAlloc>,
@@ -98,7 +97,6 @@ impl BootContext {
             reserve_ranges: Vec::<BootReserveRange>::new(),
             periph_ranges: Vec::<PeriphRange>::new(),
             reserved_page_list: List::<vm_page_t>::new(),
-            pmm_node: None,
             kernel_heap_base: 0,
             kernel_heap_size: 0,
             virtual_alloc: None,
@@ -134,13 +132,6 @@ impl BootContext {
             return &mut self.reserved_page_list;
         }
         panic!("NOT init reserved page list yet!");
-    }
-
-    fn pmm_node(&mut self) -> &mut PmmNode {
-        if let Some(ret) = &mut self.pmm_node {
-            return ret;
-        }
-        panic!("NOT init pmm node yet!");
     }
 
     fn stdout(&mut self) -> &mut StdOut {
@@ -193,12 +184,6 @@ impl WrapBootContext {
     fn reserved_page_list(&self) -> &mut List<vm_page_t> {
         unsafe {
             (*self.data.get()).reserved_page_list()
-        }
-    }
-
-    fn pmm_node(&self) -> &mut PmmNode {
-        unsafe {
-            (*self.data.get()).pmm_node()
         }
     }
 
@@ -347,10 +332,8 @@ fn dlog_init_early() {
 fn call_constructors() {
     unsafe {
         (*BOOT_CONTEXT.data.get()).reserved_page_list.init();
-        (*BOOT_CONTEXT.data.get()).pmm_node = Some(PmmNode::new());
-        let pmm_node = BOOT_CONTEXT.pmm_node();
-        pmm_node.init();
     }
+    PMM_NODE.init();
 }
 
 fn arch_early_init() {

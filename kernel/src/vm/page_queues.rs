@@ -6,7 +6,6 @@
  * at https://opensource.org/licenses/MIT
  */
 
-use crate::ZX_ASSERT;
 use crate::page::vm_page_t;
 use super::vm_cow_pages::VmCowPages;
 

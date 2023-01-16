@@ -9,7 +9,7 @@
 #![allow(dead_code)]
 
 use core::{marker::PhantomData, ptr::null_mut};
-use crate::ZX_ASSERT_MSG;
+use crate::{ZX_ASSERT_MSG, ZX_ASSERT};
 
 #[macro_export(local_inner_macros)]
 macro_rules! offset_of {
@@ -242,13 +242,13 @@ impl<T: Linked<T>> List<T> {
         }
         self.node.prev = other.node.prev;
 
-        other.node.next = null_mut();
-        other.node.prev = null_mut();
+        other.init();
     }
 
-    pub fn len(&self) -> usize {
+    pub fn _len(&self) -> usize {
         let mut ret = 0;
         let mut next = self.node.next;
+        ZX_ASSERT!(next != null_mut());
         while next != self.ref_node {
             ret += 1;
             unsafe {
