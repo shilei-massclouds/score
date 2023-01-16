@@ -8,6 +8,7 @@
 
 use core::ptr::null_mut;
 
+use crate::locking::mutex::Mutex;
 use crate::types::vaddr_t;
 use crate::{ZX_ASSERT, vm_page_state};
 use crate::arch::mmu::zero_page;
@@ -46,7 +47,7 @@ pub struct VmCowPages {
     options: u32,
     #[allow(dead_code)]
     pmm_alloc_flags: u32,
-    page_list: VmPageList,
+    page_list: Mutex<VmPageList>,
     page_source: *mut PageSource,
 }
 
@@ -80,7 +81,7 @@ impl VmCowPages {
             size,
             options,
             pmm_alloc_flags,
-            page_list: VmPageList::new(),
+            page_list: Mutex::new(VmPageList::new()),
             page_source: null_mut(),
         }
     }
@@ -95,8 +96,8 @@ impl VmCowPages {
 
     pub fn add_new_pages(&mut self, start_offset: usize,
                          pages: &mut List<vm_page_t>,
-                         overwrite: CanOverwriteContent, zero: bool,
-                         _do_range_update: bool)
+                         overwrite: CanOverwriteContent,
+                         zero: bool, do_range_update: bool)
         -> Result<(), ErrNO>
     {
         ZX_ASSERT!(!matches!(overwrite, CanOverwriteContent::NonZero));
@@ -115,7 +116,14 @@ impl VmCowPages {
             offset += PAGE_SIZE;
         }
 
-        todo!("add_new_pages!");
+        if do_range_update {
+            /* other mappings may have covered this offset into the vmo,
+             * so unmap those ranges */
+            // RangeChangeUpdateLocked(start_offset, offset - start_offset, RangeChangeOp::Unmap);
+            todo!("do_range_update!");
+        }
+
+        Ok(())
     }
 
     fn zero_page(page_ptr: *mut vm_page_t) {
@@ -179,14 +187,14 @@ impl VmCowPages {
             */
         }
 
-        let mut p = VmPageOrMarker::as_page(page);
-        self.add_page(&mut p, offset, overwrite, released_page, do_range_update)
+        let p = VmPageOrMarker::as_page(page);
+        self.add_page(&p, offset, overwrite, released_page, do_range_update)
     }
 
-    fn add_page(&mut self, p: &mut VmPageOrMarker, offset: usize,
+    fn add_page(&mut self, p: &VmPageOrMarker, offset: usize,
                 overwrite: &CanOverwriteContent,
                 released_page: Option<&mut VmPageOrMarker>,
-                _do_range_update: bool)
+                do_range_update: bool)
         -> Result<(), ErrNO>
     {
         if p.is_page() {
@@ -206,7 +214,8 @@ impl VmCowPages {
             return Err(ErrNO::OutOfRange);
         }
 
-        let page = self.page_list.lookup_or_allocate(offset)?;
+        let mut pl = self.page_list.lock();
+        let page = pl.lookup_or_allocate(offset)?;
 
         /* We cannot overwrite any kind of content. */
         if matches!(overwrite, CanOverwriteContent::None) {
@@ -251,7 +260,16 @@ impl VmCowPages {
             }
         }
 
-        todo!("add_page!");
+        page.set(p);
+
+        if do_range_update {
+            /* other mappings may have covered this offset into the vmo,
+             * so unmap those ranges */
+            // RangeChangeUpdateLocked(offset, PAGE_SIZE, RangeChangeOp::Unmap);
+            todo!("do_range_update!");
+        }
+
+        Ok(())
     }
 
     fn set_not_wired_locked(&self, page: *mut vm_page_t, offset: usize) {
@@ -276,7 +294,7 @@ impl VmCowPages {
     }
 
     pub fn pin_range(&self, _offset: usize, _len: usize) -> Result<(), ErrNO> {
-        todo!("add_new_pages!");
+        todo!("pin_range!");
     }
 
 }

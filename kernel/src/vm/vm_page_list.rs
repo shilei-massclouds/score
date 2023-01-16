@@ -53,6 +53,24 @@ impl VmPageOrMarker {
          * since Page has 0's for the type anyway. */
         self.raw as *mut vm_page_t
     }
+
+    pub fn set_page(&mut self, p: &VmPageOrMarker) {
+        ZX_ASSERT!(p.is_page());
+        let raw = p.page() as usize;
+        // A pointer should be aligned by definition, and hence the low bits should always be zero, but
+        // assert this anyway just in case kTypeBits is increased or someone passed an invalid pointer.
+        ZX_ASSERT!((raw & BIT_MASK!(Self::K_TYPE_BITS)) == 0);
+        self.raw = raw | Self::K_PAGE_TYPE;
+    }
+
+    pub fn set(&mut self, p: &VmPageOrMarker) {
+        if p.is_page() {
+            self.set_page(p);
+        } else {
+            todo!("NOT support!");
+        }
+    }
+
     /*
     ReferenceValue Reference() const {
         DEBUG_ASSERT(IsReference());
