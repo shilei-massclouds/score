@@ -6,7 +6,6 @@
  * at https://opensource.org/licenses/MIT
  */
 
-#![no_std]
 #![allow(dead_code)]
 
 use alloc::boxed::Box;
@@ -14,6 +13,7 @@ use core::cmp::Ord;
 use core::fmt::Debug;
 use core::cmp::Ordering;
 use core::ptr;
+use crate::debug::*;
 
 extern crate alloc;
 
@@ -36,6 +36,61 @@ impl<K: Ord, V> RBTree<K, V> {
             root: NodePtr::null(),
             len: 0,
         }
+    }
+
+    // upper_bound(key) : Finds the element (E) in the tree such that E.key > key
+    pub fn upper_bound(&self, k: &K) -> Option<&V> {
+        let node = self.bound(k, true);
+        if node.is_null() {
+            return None;
+        }
+
+        unsafe { Some(&(*node.0).value) }
+    }
+
+    // lower_bound(key) : Finds the element (E) in the tree such that E.key >= key
+    pub fn lower_bound(&self, k: &K) -> Option<&V> {
+        let node = self.bound(k, false);
+        if node.is_null() {
+            return None;
+        }
+
+        unsafe { Some(&(*node.0).value) }
+    }
+
+    fn bound(&self, k: &K, strict: bool) -> NodePtr<K, V> {
+        if self.root.is_null() {
+            return NodePtr::null();
+        }
+
+        let go_right = |order| {
+            if strict {
+                matches!(order, Ordering::Greater | Ordering::Equal)
+            } else {
+                matches!(order, Ordering::Greater)
+            }
+        };
+
+        let mut found = NodePtr::null();
+        let mut temp = &self.root;
+        unsafe {
+            loop {
+                if go_right(k.cmp(&(*temp.0).key)) {
+                    temp = &mut (*temp.0).right;
+                } else {
+                    /* If this node's key must be greater than or
+                     * equal to the user's key.
+                     * This node is now our candidate for our found node. */
+                    found = *temp;
+
+                    temp = &mut (*temp.0).left;
+                };
+                if temp.is_null() {
+                    break;
+                }
+            }
+        }
+        found
     }
 
     #[inline]

@@ -35,7 +35,7 @@ pub struct vm_page_object {
     // Identifies which queue this page is in.
     pub page_queue: AtomicU8,
 
-    pin_count: u8,
+    pub pin_count: u8,
 
     /* Tracks state used to determine whether the page is dirty and
      * its contents need to written back to the page source at some point,
@@ -277,6 +277,10 @@ impl Linked<vm_page> for vm_page {
 }
 
 impl vm_page {
+    pub const VM_PAGE_OBJECT_PIN_COUNT_BITS: usize = 5;
+    pub const VM_PAGE_OBJECT_MAX_PIN_COUNT: usize =
+        (1 << Self::VM_PAGE_OBJECT_PIN_COUNT_BITS) - 1;
+
     pub fn init(&mut self, paddr: paddr_t) {
         self.queue_node = ListNode::new();
         self.paddr = paddr;

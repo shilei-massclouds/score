@@ -8,7 +8,6 @@ edition = "2021"
 [dependencies]
 spin = "0.9.4"
 device_tree = { path = "../device_tree", default-features = false }
-rbtree = { path = "../rbtree" }
 
 [features]
 unittest = []

@@ -6,14 +6,16 @@
  * at https://opensource.org/licenses/MIT
  */
 
+
+use core::cmp::min;
 use crate::errors::ErrNO;
+use crate::klib::rbtree::RBTree;
 use crate::page::vm_page_t;
 use crate::ZX_ASSERT;
 use crate::types::*;
 use crate::BIT_MASK;
 use crate::debug::*;
 use crate::defines::{PAGE_SIZE, PAGE_SHIFT};
-use rbtree::RBTree;
 
 // RAII helper for representing content in a page list node. This supports being in one of three
 // states
@@ -144,6 +146,18 @@ impl VmPageListNode {
         }
     }
 
+    pub fn offset(&self) -> usize {
+        self.obj_offset
+    }
+
+    pub fn end_offset(&self) -> usize {
+        self.offset() + Self::K_PAGE_FAN_OUT * PAGE_SIZE
+    }
+
+    pub fn key(&self) -> usize {
+        self.obj_offset
+    }
+
     #[allow(dead_code)]
     pub fn lookup(&self, index: usize) -> &VmPageOrMarker {
         ZX_ASSERT!(index < Self::K_PAGE_FAN_OUT);
@@ -153,6 +167,17 @@ impl VmPageListNode {
     pub fn lookup_mut(&mut self, index: usize) -> &mut VmPageOrMarker {
         ZX_ASSERT!(index < Self::K_PAGE_FAN_OUT);
         &mut self.pages[index]
+    }
+
+    fn for_every_page_in_range<F>(&self, per_page_func: F,
+                                  start_offset: usize,
+                                  end_offset: usize,
+                                  skew: usize)
+        -> Result<(), ErrNO>
+    where F: FnMut(&VmPageOrMarker, usize) -> Result<(), ErrNO>
+    {
+        todo!("for_every_page_in_range!");
+        Err(ErrNO::InvalidArgs)
     }
 }
 
@@ -215,5 +240,32 @@ impl VmPageList {
         }
 
         panic!("Bad VmPageListNode!");
+    }
+
+    pub fn for_every_page_in_range<F>(&self, per_page_func: F,
+                                      start_offset: usize, end_offset: usize)
+        -> Result<(), ErrNO>
+    where F: FnMut(&VmPageOrMarker, usize) -> Result<(), ErrNO>
+    {
+        let start_offset = start_offset + self.list_skew;
+        let end_offset = end_offset + self.list_skew;
+
+        // Find the first node (if any) that will contain our starting offset.
+        let offset = ROUNDDOWN!(start_offset, VmPageListNode::K_PAGE_FAN_OUT * PAGE_SIZE);
+        let cur = match self.list.lower_bound(&offset) {
+            None => return Ok(()),
+            Some(v) => v,
+        };
+
+        // Handle scenario where start_offset begins not aligned to a node.
+        if cur.offset() < start_offset {
+            cur.for_every_page_in_range(per_page_func, start_offset,
+                                        min(end_offset, cur.end_offset()),
+                                        self.list_skew)?;
+
+        }
+
+        todo!("for_every_page_in_range!");
+        Err(ErrNO::InvalidArgs)
     }
 }

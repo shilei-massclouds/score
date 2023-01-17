@@ -8,17 +8,20 @@
 
 use core::ptr::null_mut;
 
+use crate::ZX_ASSERT;
+use crate::klib::range::is_in_range;
 use crate::locking::mutex::Mutex;
 use crate::types::vaddr_t;
-use crate::{ZX_ASSERT, vm_page_state};
+use crate::vm_page_state;
 use crate::arch::mmu::zero_page;
 use crate::defines::{PAGE_SIZE, paddr_to_physmap};
 use crate::errors::ErrNO;
 use crate::klib::list::List;
-use crate::page::{vm_page_t, vm_page_object};
+use crate::page::{vm_page_t, vm_page, vm_page_object};
 use super::page_source::PageSource;
 use super::vm_page_list::{VmPageList, VmPageOrMarker};
 use crate::pmm::pmm_page_queues;
+use crate::debug::*;
 
 #[allow(dead_code)]
 type VmCowPagesPtr = *mut VmCowPages;
@@ -40,15 +43,15 @@ pub enum CanOverwriteContent {
 }
 
 pub struct VmCowPages {
-    #[allow(dead_code)]
     base: vaddr_t,
     size: usize,
-    #[allow(dead_code)]
     options: u32,
-    #[allow(dead_code)]
     pmm_alloc_flags: u32,
     page_list: Mutex<VmPageList>,
     page_source: *mut PageSource,
+    /* Counts the total number of pages pinned by ::CommitRange.
+     * If one page is pinned n times, it contributes n to this count. */
+    pinned_page_count: usize,
 }
 
 impl VmCowPages {
@@ -83,6 +86,7 @@ impl VmCowPages {
             pmm_alloc_flags,
             page_list: Mutex::new(VmPageList::new()),
             page_source: null_mut(),
+            pinned_page_count: 0,
         }
     }
 
@@ -293,8 +297,68 @@ impl VmCowPages {
         }
     }
 
-    pub fn pin_range(&self, _offset: usize, _len: usize) -> Result<(), ErrNO> {
-        todo!("pin_range!");
+    pub fn pin_range(&mut self, offset: usize, len: usize) -> Result<(), ErrNO> {
+        dprintf!(INFO, "pin_range: offset 0x{:x}, len 0x{:x}\n", offset, len);
+
+        ZX_ASSERT!(IS_PAGE_ALIGNED!(offset));
+        ZX_ASSERT!(IS_PAGE_ALIGNED!(len));
+        ZX_ASSERT!(is_in_range(offset, len, 0, self.size));
+
+        if self.is_slice_locked() {
+            todo!("is_slice_locked!");
+        }
+
+        /* Tracks our expected page offset when iterating to
+         * ensure all pages are present. */
+        let mut next_offset = offset;
+
+        let per_page_func = |p: &VmPageOrMarker, page_offset| {
+            if page_offset != next_offset || !p.is_page() {
+                return Err(ErrNO::BadState);
+            }
+            let page = unsafe { &mut (*p.page()) };
+            ZX_ASSERT!(page.state() == vm_page_state::OBJECT);
+            ZX_ASSERT!(!page.is_loaned());
+
+            if page.object.pin_count == vm_page::VM_PAGE_OBJECT_MAX_PIN_COUNT as u8 {
+                return Err(ErrNO::BadState);
+            }
+
+            page.object.pin_count += 1;
+            if page.object.pin_count == 1 {
+                Self::move_to_wired_locked(page, page_offset);
+            }
+
+            next_offset += PAGE_SIZE;
+            return Ok(());
+        };
+
+        let pl = self.page_list.lock();
+        pl.for_every_page_in_range(per_page_func, offset, offset + len)?;
+
+        let actual = (next_offset - offset) / PAGE_SIZE;
+        /* Count whatever pages we pinned, in the failure scenario
+         * this will get decremented on the unpin. */
+        self.pinned_page_count += actual;
+
+        /* If the missing pages were at the end of the range
+         * (or the range was empty) then our iteration will have just
+         * returned ZX_OK. Perform one final check that we actually
+         * pinned the number of pages we expected to. */
+        let expected = len / PAGE_SIZE;
+        if actual != expected {
+            return Err(ErrNO::BadState);
+        }
+
+        Ok(())
+    }
+
+    fn move_to_wired_locked(page: *mut vm_page_t, _offset: usize) {
+        pmm_page_queues().move_to_wired(page);
+    }
+
+    fn is_slice_locked(&self) -> bool {
+        (self.options & Self::K_SLICE) != 0
     }
 
 }

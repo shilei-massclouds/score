@@ -27,3 +27,26 @@ pub fn intersects(offset1: usize, len1: usize, offset2: usize, len2: usize)
 
     true
 }
+
+#[inline]
+pub fn is_in_range(offset: usize, len: usize, min: usize, max: usize) -> bool {
+    let offset = offset - min;
+    let max = max - min;
+
+    // trim offset/len to the range
+    if offset + len < offset {
+        return false;  // offset + len wrapped
+    }
+
+    // we started off the end of the range
+    if offset > max {
+        return false;
+    }
+
+    // does the end exceed the range?
+    if offset + len > max {
+        return false;
+    }
+
+    true
+}

@@ -123,6 +123,14 @@ impl PageQueues {
                                        Self::PAGE_QUEUE_ANONYMOUS);
     }
 
+    fn move_to_queue_locked(&self, page: *mut vm_page_t, queue: usize) {
+        todo!("move_to_queue_locked!");
+    }
+
+    pub fn move_to_wired(&self, page: *mut vm_page_t) {
+        self.move_to_queue_locked(page, Self::PAGE_QUEUE_WIRED);
+    }
+
     fn set_queue_backlink_locked(&self, page: &mut vm_page_t, object: usize,
                                  page_offset: usize, queue: usize)
     {
