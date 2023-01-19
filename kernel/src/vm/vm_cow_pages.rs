@@ -43,9 +43,11 @@ pub enum CanOverwriteContent {
 }
 
 pub struct VmCowPages {
+    #[allow(dead_code)]
     base: vaddr_t,
     size: usize,
     options: u32,
+    #[allow(dead_code)]
     pmm_alloc_flags: u32,
     page_list: Mutex<VmPageList>,
     page_source: *mut PageSource,
@@ -312,7 +314,7 @@ impl VmCowPages {
          * ensure all pages are present. */
         let mut next_offset = offset;
 
-        let per_page_func = |p: &VmPageOrMarker, page_offset| {
+        let mut per_page_func = |p: &VmPageOrMarker, page_offset| {
             if page_offset != next_offset || !p.is_page() {
                 return Err(ErrNO::BadState);
             }
@@ -334,7 +336,7 @@ impl VmCowPages {
         };
 
         let pl = self.page_list.lock();
-        pl.for_every_page_in_range(per_page_func, offset, offset + len)?;
+        pl.for_every_page_in_range(&mut per_page_func, offset, offset + len)?;
 
         let actual = (next_offset - offset) / PAGE_SIZE;
         /* Count whatever pages we pinned, in the failure scenario
@@ -350,6 +352,7 @@ impl VmCowPages {
             return Err(ErrNO::BadState);
         }
 
+        dprintf!(INFO, "pin_range!");
         Ok(())
     }
 

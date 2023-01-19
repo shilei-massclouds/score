@@ -12,8 +12,7 @@ use alloc::boxed::Box;
 use core::cmp::Ord;
 use core::fmt::Debug;
 use core::cmp::Ordering;
-use core::ptr;
-use crate::debug::*;
+use core::{ptr, marker};
 
 extern crate alloc;
 
@@ -39,28 +38,18 @@ impl<K: Ord, V> RBTree<K, V> {
     }
 
     // upper_bound(key) : Finds the element (E) in the tree such that E.key > key
-    pub fn upper_bound(&self, k: &K) -> Option<&V> {
-        let node = self.bound(k, true);
-        if node.is_null() {
-            return None;
-        }
-
-        unsafe { Some(&(*node.0).value) }
+    pub fn upper_bound(&self, k: &K) -> IterMut<K, V> {
+        self.bound(k, true)
     }
 
     // lower_bound(key) : Finds the element (E) in the tree such that E.key >= key
-    pub fn lower_bound(&self, k: &K) -> Option<&V> {
-        let node = self.bound(k, false);
-        if node.is_null() {
-            return None;
-        }
-
-        unsafe { Some(&(*node.0).value) }
+    pub fn lower_bound(&self, k: &K) -> IterMut<K, V> {
+        self.bound(k, false)
     }
 
-    fn bound(&self, k: &K, strict: bool) -> NodePtr<K, V> {
+    fn bound(&self, k: &K, strict: bool) -> IterMut<K, V> {
         if self.root.is_null() {
-            return NodePtr::null();
+            return IterMut::null();
         }
 
         let go_right = |order| {
@@ -90,7 +79,11 @@ impl<K: Ord, V> RBTree<K, V> {
                 }
             }
         }
-        found
+        if found.is_null() {
+            IterMut::null()
+        } else {
+            IterMut::new(found)
+        }
     }
 
     #[inline]
@@ -280,6 +273,46 @@ impl<K: Ord, V> RBTree<K, V> {
         node.set_parent(temp.clone());
     }
 
+    #[inline]
+    fn first_child(&self) -> NodePtr<K, V> {
+        if self.root.is_null() {
+            NodePtr::null()
+        } else {
+            let mut temp = self.root;
+            while !temp.left().is_null() {
+                temp = temp.left();
+            }
+            temp
+        }
+    }
+
+    #[inline]
+    fn last_child(&self) -> NodePtr<K, V> {
+        if self.root.is_null() {
+            NodePtr::null()
+        } else {
+            let mut temp = self.root;
+            while !temp.right().is_null() {
+                temp = temp.right();
+            }
+            temp
+        }
+    }
+
+    /// Return the key and value iter
+    #[inline]
+    pub fn iter(&self) -> Iter<K, V> {
+        Iter {
+            cursor: self.first_child(),
+            _marker: marker::PhantomData,
+        }
+    }
+
+    /// Return the key and mut value iter
+    #[inline]
+    pub fn iter_mut(&mut self) -> IterMut<K, V> {
+        IterMut::new(self.first_child())
+    }
 }
 
 /*****************RBTreeNode***************************/
@@ -437,5 +470,116 @@ impl<K: Ord, V> NodePtr<K, V> {
             return true;
         }
         unsafe { (*self.0).color == Color::Black }
+    }
+
+    #[inline]
+    fn min_node(self) -> NodePtr<K, V> {
+        let mut temp = self.clone();
+        while !temp.left().is_null() {
+            temp = temp.left();
+        }
+        return temp;
+    }
+
+    #[inline]
+    fn is_left_child(&self) -> bool {
+        self.parent().left() == *self
+    }
+
+    #[inline]
+    fn next(self) -> NodePtr<K, V> {
+        if !self.right().is_null() {
+            self.right().min_node()
+        } else {
+            let mut temp = self;
+            loop {
+                if temp.parent().is_null() {
+                    return NodePtr::null();
+                }
+                if temp.is_left_child() {
+                    return temp.parent();
+                }
+                temp = temp.parent();
+            }
+        }
+    }
+}
+
+/// provide iter ref for RBTree
+/// # Examples
+/// ```
+/// use rbtree::RBTree;
+/// let mut m = RBTree::new();
+/// for i in 0..32 {
+///     m.insert(i, i * 2);
+/// }
+/// assert_eq!(m.len(), 32);
+/// let mut observed: u32 = 0;
+/// for (k, v) in m.iter() {
+///     assert_eq!(*v, *k * 2);
+///     observed |= 1 << *k;
+/// }
+/// assert_eq!(observed, 0xFFFF_FFFF);
+/// ```
+pub struct Iter<K: Ord, V> {
+    cursor: NodePtr<K, V>,
+    _marker: marker::PhantomData<V>,
+}
+
+/// provide iter mut ref for RBTree
+/// # Examples
+/// ```
+/// use rbtree::RBTree;
+/// let mut m = RBTree::new();
+/// for i in 0..32 {
+///     m.insert(i, i);
+/// }
+/// assert_eq!(m.len(), 32);
+/// for (_, v) in m.iter_mut() {
+///     *v *= 2;
+/// }
+/// for i in 0..32 {
+///     assert_eq!(m.get(&i).unwrap(), &(i * 2));
+/// }
+/// ```
+pub struct IterMut<'a, K: Ord, V> {
+    cursor: NodePtr<K, V>,
+    _marker: marker::PhantomData<&'a ()>,
+}
+
+impl<'a, K: Ord, V> IterMut<'a, K, V> {
+    fn new(ptr: NodePtr<K, V>) -> Self {
+        IterMut {
+            cursor: ptr,
+            _marker: marker::PhantomData,
+        }
+    }
+
+    pub fn null() -> Self {
+        IterMut {
+            cursor: NodePtr::null(),
+            _marker: marker::PhantomData,
+        }
+    }
+
+    pub fn is_null(&self) -> bool {
+        self.cursor.is_null()
+    }
+}
+
+impl<'a, K: Ord + 'a, V: 'a> Iterator for IterMut<'a, K, V> {
+    type Item = (&'a K, &'a mut V);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.cursor.is_null() {
+            return None;
+        }
+
+        let (k, v) = unsafe {
+            (&(*self.cursor.0).key, &mut (*self.cursor.0).value)
+        };
+
+        self.cursor = self.cursor.next();
+        Some((k, v))
     }
 }

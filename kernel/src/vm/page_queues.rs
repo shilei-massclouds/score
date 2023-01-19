@@ -87,8 +87,11 @@ impl PageQueues {
     pub const PAGE_QUEUE_NONE       : usize = 0;
     pub const PAGE_QUEUE_ANONYMOUS  : usize = 1;
     pub const PAGE_QUEUE_WIRED      : usize = 2;
+    #[allow(dead_code)]
     pub const PAGE_QUEUE_ANONYMOUS_ZERO_FORK: usize = 3;
+    #[allow(dead_code)]
     pub const PAGE_QUEUE_PAGER_BACKED_DIRTY : usize = 4;
+    #[allow(dead_code)]
     pub const PAGE_QUEUE_RECLAIM_DONT_NEED  : usize = 5;
 
     pub const PAGE_QUEUE_RECLAIM_BASE : usize = 6;
@@ -123,7 +126,7 @@ impl PageQueues {
                                        Self::PAGE_QUEUE_ANONYMOUS);
     }
 
-    fn move_to_queue_locked(&self, page: *mut vm_page_t, queue: usize) {
+    fn move_to_queue_locked(&self, _page: *mut vm_page_t, _queue: usize) {
         todo!("move_to_queue_locked!");
     }
 

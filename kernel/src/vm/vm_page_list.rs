@@ -154,6 +154,7 @@ impl VmPageListNode {
         self.offset() + Self::K_PAGE_FAN_OUT * PAGE_SIZE
     }
 
+    #[allow(dead_code)]
     pub fn key(&self) -> usize {
         self.obj_offset
     }
@@ -169,16 +170,37 @@ impl VmPageListNode {
         &mut self.pages[index]
     }
 
-    fn for_every_page_in_range<F>(&self, per_page_func: F,
+    fn for_every_page_in_range<F>(&self, per_page_func: &mut F,
                                   start_offset: usize,
                                   end_offset: usize,
                                   skew: usize)
         -> Result<(), ErrNO>
     where F: FnMut(&VmPageOrMarker, usize) -> Result<(), ErrNO>
     {
-        todo!("for_every_page_in_range!");
-        Err(ErrNO::InvalidArgs)
+        /* Assert that the requested range is sensible and falls
+         * within our nodes actual offset range. */
+        ZX_ASSERT!(end_offset >= start_offset);
+        ZX_ASSERT!(start_offset >= self.obj_offset);
+        ZX_ASSERT!(end_offset <= self.end_offset());
+        let start = (start_offset - self.obj_offset) / PAGE_SIZE;
+        let end = (end_offset - self.obj_offset) / PAGE_SIZE;
+        for i in start..end {
+            if !self.pages[i].is_empty() {
+                per_page_func(&self.pages[i], self.obj_offset + i * PAGE_SIZE - skew)?;
+            }
+        }
+        Ok(())
     }
+
+    // for every page or marker in the node call the passed in function.
+    fn for_every_page<F>(&self, per_page_func: &mut F, skew: usize)
+        -> Result<(), ErrNO>
+    where F: FnMut(&VmPageOrMarker, usize) -> Result<(), ErrNO>
+    {
+        self.for_every_page_in_range(per_page_func,
+                                     self.offset(), self.end_offset(), skew)
+    }
+
 }
 
 pub struct VmPageList {
@@ -242,7 +264,7 @@ impl VmPageList {
         panic!("Bad VmPageListNode!");
     }
 
-    pub fn for_every_page_in_range<F>(&self, per_page_func: F,
+    pub fn for_every_page_in_range<F>(&self, per_page_func: &mut F,
                                       start_offset: usize, end_offset: usize)
         -> Result<(), ErrNO>
     where F: FnMut(&VmPageOrMarker, usize) -> Result<(), ErrNO>
@@ -252,9 +274,10 @@ impl VmPageList {
 
         // Find the first node (if any) that will contain our starting offset.
         let offset = ROUNDDOWN!(start_offset, VmPageListNode::K_PAGE_FAN_OUT * PAGE_SIZE);
-        let cur = match self.list.lower_bound(&offset) {
+        let mut iter = self.list.lower_bound(&offset);
+        let mut cur = match iter.next() {
             None => return Ok(()),
-            Some(v) => v,
+            Some((_, v)) => v,
         };
 
         // Handle scenario where start_offset begins not aligned to a node.
@@ -263,9 +286,27 @@ impl VmPageList {
                                         min(end_offset, cur.end_offset()),
                                         self.list_skew)?;
 
+            cur = match iter.next() {
+                None => return Ok(()),
+                Some((_, v)) => v,
+            };
+        }
+        // Iterate through all full nodes contained in the range.
+        while cur.end_offset() < end_offset {
+            ZX_ASSERT!(start_offset <= cur.offset());
+            cur.for_every_page(per_page_func, self.list_skew)?;
+            cur = match iter.next() {
+                None => return Ok(()),
+                Some((_, v)) => v,
+            };
+        }
+        // Handle scenario where the end_offset is not aligned to the end of a node.
+        if cur.offset() < end_offset {
+            ZX_ASSERT!(cur.end_offset() >= end_offset);
+            cur.for_every_page_in_range(per_page_func,
+                                        cur.offset(), end_offset, self.list_skew)?;
         }
 
-        todo!("for_every_page_in_range!");
-        Err(ErrNO::InvalidArgs)
+        Ok(())
     }
 }

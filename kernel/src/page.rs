@@ -85,7 +85,9 @@ impl vm_page_object {
     pub const DIRTY_STATE_NUM_STATES:   u8 = 4;
 
     const K_OBJECT_OR_STACK_OWNER_IS_STACK_OWNER_FLAG:  usize = 0x1;
+    #[allow(dead_code)]
     const K_OBJECT_OR_STACK_OWNER_HAS_WAITER:           usize = 0x2;
+    #[allow(dead_code)]
     const K_OBJECT_OR_STACK_OWNER_FLAGS:                usize = 0x3;
 
     #[allow(dead_code)]
@@ -126,6 +128,7 @@ impl vm_page_object {
         self.object_or_stack_owner.store(obj, Ordering::Relaxed);
     }
 
+    #[allow(dead_code)]
     fn clear_stack_owner(&self) {
         self.clear_stack_owner_internal(0);
     }
