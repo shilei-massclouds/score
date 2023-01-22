@@ -6,37 +6,24 @@
  * at https://opensource.org/licenses/MIT
  */
 
+use alloc::sync::Arc;
 use alloc::string::String;
-
+use alloc::vec::Vec;
 use crate::ZX_ASSERT;
 use crate::defines::PAGE_SIZE;
 use crate::errors::ErrNO;
-use crate::klib::list::List;
+use crate::klib::list::{List, ListNode, Linked};
 use crate::page::vm_page_t;
+use crate::locking::mutex::Mutex;
 use crate::pmm::{PMM_ALLOC_FLAG_CAN_WAIT, pmm_alloc_pages};
 use crate::vm::vm_cow_pages::{VmCowPages, CanOverwriteContent};
 
-pub struct VmObject {
-    name: String,
-}
-
-impl VmObject {
-    #[allow(dead_code)]
-    const fn new() -> Self {
-        Self {
-            name: String::new(),
-        }
-    }
-
-    fn set_name(&mut self, name: &str) {
-        self.name = String::from(name);
-    }
-}
-
-type VmObjectPagedPtr = *mut VmObjectPaged;
+type VmObjectPagedLockRef = Arc<Mutex<VmObjectPaged>>;
 
 pub struct VmObjectPaged {
-    vmo: VmObject,
+    name: String,
+    options: u32,
+    cow_pages: Option<VmCowPages>,
 }
 
 impl VmObjectPaged {
@@ -51,14 +38,16 @@ impl VmObjectPaged {
     pub const K_CAN_BLOCK_ON_PAGE_REQUESTS: u32 = 1 << 31;
 
     #[allow(dead_code)]
-    pub const fn new() -> Self {
+    pub const fn new(options: u32) -> Self {
         Self {
-            vmo: VmObject::new(),
+            name: String::new(),
+            options,
+            cow_pages: None,
         }
     }
 
     pub fn set_name(&mut self, name: &str) {
-        self.vmo.set_name(name);
+        self.set_name(name);
     }
 
     fn check_bits(options: u32, refval: u32) -> bool {
@@ -66,7 +55,7 @@ impl VmObjectPaged {
     }
 
     pub fn create(pmm_alloc_flags: u32, options: u32, size: usize)
-        -> Result<VmObjectPagedPtr, ErrNO>
+        -> Result<VmObjectPagedLockRef, ErrNO>
     {
         let refval = Self::K_CONTIGUOUS | Self::K_CAN_BLOCK_ON_PAGE_REQUESTS;
         if Self::check_bits(options, refval) {
@@ -77,7 +66,7 @@ impl VmObjectPaged {
     }
 
     fn create_common(pmm_alloc_flags: u32, mut options: u32, size: usize)
-        -> Result<VmObjectPagedPtr, ErrNO>
+        -> Result<VmObjectPagedLockRef, ErrNO>
     {
         let refval = Self::K_CONTIGUOUS | Self::K_CAN_BLOCK_ON_PAGE_REQUESTS;
         ZX_ASSERT!(!Self::check_bits(options, refval));
@@ -119,11 +108,21 @@ impl VmObjectPaged {
 
             /* With all the pages in place, pin them. */
             cow_pages.pin_range(0, size)?;
-
-            todo!("K_ALWAYS_PINNED!");
         }
 
-        todo!("create_common!");
+        let vmo_ref = Arc::new(Mutex::new(VmObjectPaged::new(options)));
+
+        // This creation has succeeded. Must wire up the cow pages and *then* place in the globals list.
+        cow_pages.set_paged_backlink_locked(vmo_ref.clone());
+        {
+            let mut vmo = vmo_ref.as_ref().lock();
+            vmo.cow_pages = Some(cow_pages);
+        }
+        ALL_VMOS.lock().push(vmo_ref.clone());
+
+        Ok(vmo_ref)
     }
 
 }
+
+pub static ALL_VMOS: Mutex<Vec::<VmObjectPagedLockRef>> = Mutex::new(Vec::new());

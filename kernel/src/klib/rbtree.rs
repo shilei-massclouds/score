@@ -329,6 +329,8 @@ struct RBTreeNode<K: Ord, V> {
 #[derive(Debug)]
 struct NodePtr<K: Ord, V>(*mut RBTreeNode<K, V>);
 
+unsafe impl<K: Ord, V> Send for NodePtr<K, V> {}
+
 impl<K: Ord, V> Clone for NodePtr<K, V> {
     fn clone(&self) -> NodePtr<K, V> {
         NodePtr(self.0)

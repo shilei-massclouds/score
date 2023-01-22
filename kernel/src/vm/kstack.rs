@@ -86,7 +86,8 @@ fn allocate_map(stype: StackType, map: &KernelStackMapping)
         let stack_vmo = VmObjectPaged::create(PMM_ALLOC_FLAG_ANY,
                                               VmObjectPaged::K_ALWAYS_PINNED,
                                               stype.size)?;
-        (*stack_vmo).set_name(stype.name);
+        let mut stack_vmo = stack_vmo.as_ref().lock();
+        stack_vmo.set_name(stype.name);
     }
 
     todo!("allocate_map!");

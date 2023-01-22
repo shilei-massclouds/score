@@ -8,3 +8,10 @@
 
 pub struct PageSource {
 }
+
+impl PageSource {
+    pub const fn new() -> Self {
+        Self {
+        }
+    }
+}

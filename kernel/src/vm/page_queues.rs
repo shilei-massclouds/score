@@ -126,8 +126,23 @@ impl PageQueues {
                                        Self::PAGE_QUEUE_ANONYMOUS);
     }
 
-    fn move_to_queue_locked(&self, _page: *mut vm_page_t, _queue: usize) {
-        todo!("move_to_queue_locked!");
+    fn move_to_queue_locked(&self, ptr: *mut vm_page_t, queue: usize) {
+        let page= unsafe { &mut (*ptr) };
+        ZX_ASSERT!(page.state() == vm_page_state::OBJECT);
+        ZX_ASSERT!(!page.is_free());
+        ZX_ASSERT!(page.is_in_list());
+        ZX_ASSERT!(page.object.get_object() != 0);
+        let old_queue =
+            page.object.page_queue.swap(queue as u8, Ordering::Relaxed)
+            as usize;
+        ZX_ASSERT!(old_queue != Self::PAGE_QUEUE_NONE);
+
+        page.delete_from_list();
+        let mut q = self.page_queues[queue].lock();
+        q.add_head(ptr);
+        self.page_queue_counts[old_queue].fetch_sub(1, Ordering::Relaxed);
+        self.page_queue_counts[queue].fetch_add(1, Ordering::Relaxed);
+        // UpdateActiveInactiveLocked(static_cast<PageQueue>(old_queue), queue);
     }
 
     pub fn move_to_wired(&self, page: *mut vm_page_t) {

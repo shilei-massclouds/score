@@ -24,7 +24,6 @@ use platform::periphmap::PeriphRange;
 use pmm::PMM_NODE;
 use stdio::StdOut;
 use thread::ThreadArg;
-
 use crate::arch::topology::topology_init;
 use crate::debug::*;
 use crate::allocator::boot_heap_earliest_init;

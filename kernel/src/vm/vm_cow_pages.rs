@@ -7,7 +7,7 @@
  */
 
 use core::ptr::null_mut;
-
+use alloc::sync::Arc;
 use crate::ZX_ASSERT;
 use crate::klib::range::is_in_range;
 use crate::locking::mutex::Mutex;
@@ -19,6 +19,7 @@ use crate::errors::ErrNO;
 use crate::klib::list::List;
 use crate::page::{vm_page_t, vm_page, vm_page_object};
 use super::page_source::PageSource;
+use super::vm_object_paged::VmObjectPaged;
 use super::vm_page_list::{VmPageList, VmPageOrMarker};
 use crate::pmm::pmm_page_queues;
 use crate::debug::*;
@@ -50,10 +51,15 @@ pub struct VmCowPages {
     #[allow(dead_code)]
     pmm_alloc_flags: u32,
     page_list: Mutex<VmPageList>,
-    page_source: *mut PageSource,
+    page_source: Arc<Mutex<PageSource>>,
     /* Counts the total number of pages pinned by ::CommitRange.
      * If one page is pinned n times, it contributes n to this count. */
     pinned_page_count: usize,
+
+    // optional reference back to a VmObjectPaged so that
+    // we can perform mapping updates. This is a raw pointer to avoid
+    // circular references, the VmObjectPaged destructor needs to update it.
+    paged_ref: Arc<Mutex<VmObjectPaged>>,
 }
 
 impl VmCowPages {
@@ -87,8 +93,9 @@ impl VmCowPages {
             options,
             pmm_alloc_flags,
             page_list: Mutex::new(VmPageList::new()),
-            page_source: null_mut(),
+            page_source: Arc::new(Mutex::new(PageSource::new())),
             pinned_page_count: 0,
+            paged_ref: Arc::new(Mutex::new(VmObjectPaged::new(options))),
         }
     }
 
@@ -153,16 +160,20 @@ impl VmCowPages {
 
     #[allow(dead_code)]
     fn is_user_pager_backed(&self) -> bool {
-        if self.page_source.is_null() {
+        /*
+        if self.page_source.as_ref().lock().is_null() {
             return false;
         }
+        */
         todo!("self.page_source.properties().is_user_pager");
     }
 
     fn is_source_preserving_page_content(&self) -> bool {
+        /*
         if self.page_source.is_null() {
             return false;
         }
+        */
         todo!("is_source_preserving_page_content");
     }
 
@@ -254,7 +265,7 @@ impl VmCowPages {
         // Note that having a page source implies that any content must be an actual page and so
         // although we return an error for any kind of content, the debug check only gets run for page
         // sources where it will be a real page.
-        ZX_ASSERT!(!p.is_page_or_ref() || self.page_source.is_null());
+        //ZX_ASSERT!(!p.is_page_or_ref() || self.page_source.is_null());
 
         // If this is actually a real page, we need to place it into the appropriate queue.
         if p.is_page() {
@@ -352,7 +363,6 @@ impl VmCowPages {
             return Err(ErrNO::BadState);
         }
 
-        dprintf!(INFO, "pin_range!");
         Ok(())
     }
 
@@ -362,6 +372,18 @@ impl VmCowPages {
 
     fn is_slice_locked(&self) -> bool {
         (self.options & Self::K_SLICE) != 0
+    }
+
+    // Sets the VmObjectPaged backlink for this copy-on-write node.
+    // This object has no tracking of mappings, but understands that
+    // they exist. When it manipulates pages in a way that could effect
+    // mappings it uses the backlink to notify the VmObjectPaged.
+    // Currently it is assumed that all nodes always have backlinks with
+    // the 1:1 hierarchy mapping.
+    pub fn set_paged_backlink_locked(&mut self,
+        paged_ref: Arc<Mutex<VmObjectPaged>>)
+    {
+        self.paged_ref = paged_ref;
     }
 
 }
